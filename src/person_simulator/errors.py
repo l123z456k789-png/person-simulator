@@ -118,3 +118,33 @@ class StorageError(PersonSimError):
 class InterruptedError(PersonSimError):
     exit_code = ExitCode.INTERRUPTED
     error_code = "E_INTERRUPTED"
+
+
+class RuntimeError(PersonSimError):
+    """Base class for runtime-persona loading and simulation errors."""
+
+    exit_code = ExitCode.PIPELINE
+    error_code = "E_RUNTIME"
+
+
+class RunNotFoundError(RuntimeError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_RUN_NOT_FOUND"
+
+
+class RunIncompleteError(RuntimeError):
+    error_code = "E_RUN_INCOMPLETE"
+
+
+class RunVersionError(RuntimeError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_RUN_VERSION"
+
+
+class RunHashError(RuntimeError):
+    error_code = "E_RUN_HASH"
+
+
+class RunModeError(RuntimeError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_RUN_MODE"
