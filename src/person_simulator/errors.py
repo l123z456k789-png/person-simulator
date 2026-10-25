@@ -148,3 +148,8 @@ class RunHashError(RuntimeError):
 class RunModeError(RuntimeError):
     exit_code = ExitCode.INPUT
     error_code = "E_RUN_MODE"
+
+
+class InviteError(PersonSimError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_INVITE"
