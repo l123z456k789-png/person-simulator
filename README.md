@@ -125,7 +125,7 @@ python tools\convert_wechat_md.py "D:\export.md" --out data\chat.txt --speaker-a
 ## Project status
 
 - **Branch**: `main`
-- **Last commit (excl. this file)**: `2bc84e9` docs: draft mode C design for review (2026-10-25)
+- **Last commit (excl. this file)**: `e6dd201` docs: refine mode C decentralized architecture (2026-10-25)
 - **Working tree (excl. this file)**: clean
 - **Upstream**: not set
 <!-- AUTO-STATUS-END -->
