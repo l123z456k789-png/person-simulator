@@ -1,0 +1,36 @@
+# person-simulator example configuration.
+# Copy to config.toml and edit; never commit a real API key.
+# API keys are read only from the PSIM_API_KEY environment variable.
+
+[model]
+mode = "mock"                 # mock | api
+provider = "mock"             # mock | openai_chat
+model = "YOUR_MODEL_ID"       # required in api mode
+base_url = "https://YOUR_PROVIDER_HOST/v1"  # API root, required in api mode
+context_window = 32768        # required in api mode; mock uses mock.context_window
+max_output_tokens = 4096
+output_limit_param = "max_tokens"  # max_tokens | max_completion_tokens
+json_object = false           # send response_format only when explicitly true
+disable_thinking = false      # send {"thinking":{"type":"disabled"}} when a provider supports it
+# temperature = 0.7           # sent only when explicitly set
+
+[chunking]
+chunk_input_budget = 6000
+overlap_messages = 4
+
+[retry]
+max_attempts = 3
+connect_timeout = 10
+read_timeout = 120
+
+[budget]
+max_repair_attempts = 1
+max_context_splits = 8
+max_requests_per_run = 500
+
+[mock]
+context_window = 32768
+
+[security]
+allow_insecure_localhost = false
+trust_env = false
