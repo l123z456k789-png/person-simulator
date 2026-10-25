@@ -262,7 +262,7 @@ MIT。见 `LICENSE`。
 ## Project status
 
 - **Branch**: `feat/mode-c`
-- **Last commit (excl. this file)**: `6ea7ac3` fix: harden mode C security boundaries and admin workflow (2026-10-25)
+- **Last commit (excl. this file)**: `d355650` fix: finish public-release hardening (2026-10-25)
 - **Working tree (excl. this file)**: clean
 - **Upstream**: not set
 <!-- AUTO-STATUS-END -->
