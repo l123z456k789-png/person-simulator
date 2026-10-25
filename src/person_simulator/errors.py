@@ -192,3 +192,13 @@ class InputTooLongError(PersonSimError):
 class OutputBlockedError(PersonSimError):
     exit_code = ExitCode.PIPELINE
     error_code = "E_OUTPUT_BLOCKED"
+
+
+class AccessDeniedError(PersonSimError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_UNAUTHORIZED"
+
+
+class ForbiddenError(PersonSimError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_FORBIDDEN"

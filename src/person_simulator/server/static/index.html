@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>人物模拟体验</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>人物模拟体验</h1>
+        <p class="banner">AI 模拟角色，不是本人；请勿输入敏感信息。</p>
+      </div>
+      <button id="end-session" type="button" class="secondary">结束会话</button>
+    </header>
+    <section id="status" class="status" aria-live="polite">正在连接…</section>
+    <section id="messages" class="messages" aria-live="polite"></section>
+    <form id="chat-form" class="composer">
+      <label class="sr-only" for="message">输入消息</label>
+      <textarea id="message" rows="2" maxlength="2000" placeholder="说点什么…" required></textarea>
+      <button id="send" type="submit">发送</button>
+    </form>
+    <p class="footnote">对方是 AI 模拟，不是真实人物；对话仅用于体验。</p>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
