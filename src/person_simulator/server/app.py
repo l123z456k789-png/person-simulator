@@ -151,6 +151,13 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+            "base-uri 'none'; form-action 'self'",
+        )
         if self.close_connection:
             self.send_header("Connection", "close")
         for key, value in headers:
@@ -336,6 +343,10 @@ class PublicHandler(_BaseHandler):
                     self.send_header("Location", "/")
                     self._set_session_cookie(session.id)
                     self.send_header("Content-Length", "0")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.send_header("X-Content-Type-Options", "nosniff")
+                    self.send_header("X-Frame-Options", "DENY")
                     self.end_headers()
                     return
                 self._serve_static("index.html")

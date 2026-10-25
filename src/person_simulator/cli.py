@@ -73,7 +73,12 @@ def _add_input_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--target", required=True, help="要建模的人物标签（必填）")
 
 
-def _add_config_args(parser: argparse.ArgumentParser, *, with_mode: bool = False) -> None:
+def _add_config_args(
+    parser: argparse.ArgumentParser,
+    *,
+    with_mode: bool = False,
+    with_max_requests: bool = True,
+) -> None:
     parser.add_argument("--config", help="TOML 配置文件")
     if with_mode:
         parser.add_argument("--mode", choices=["mock", "api"], help="运行模式；默认取配置")
@@ -87,7 +92,8 @@ def _add_config_args(parser: argparse.ArgumentParser, *, with_mode: bool = False
     parser.add_argument("--max-attempts", type=int)
     parser.add_argument("--disable-thinking", action="store_true", default=None)
     parser.add_argument("--allow-insecure-localhost", action="store_true", default=None)
-    parser.add_argument("--max-requests", type=int, help="本次运行最大请求尝试数")
+    if with_max_requests:
+        parser.add_argument("--max-requests", type=int, help="本次运行最大请求尝试数")
 
 
 def _overrides(args: argparse.Namespace) -> dict[str, Any]:
@@ -744,7 +750,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="启动去中心化第三方模拟服务")
     serve.add_argument("--run", required=True, help="已完成且通过校验的 run 目录")
     serve.add_argument("--check", action="store_true", help="只校验 run 与配置，不监听")
-    _add_config_args(serve, with_mode=True)
+    _add_config_args(serve, with_mode=True, with_max_requests=False)
     serve.add_argument("--host", help="监听地址；默认取配置，通常 127.0.0.1")
     serve.add_argument("--port", type=int, help="公开监听端口")
     serve.add_argument("--allow-lan", action="store_true", default=None)
