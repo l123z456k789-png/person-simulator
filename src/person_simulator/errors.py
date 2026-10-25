@@ -153,3 +153,37 @@ class RunModeError(RuntimeError):
 class InviteError(PersonSimError):
     exit_code = ExitCode.INPUT
     error_code = "E_INVITE"
+
+
+class SessionError(PersonSimError):
+    exit_code = ExitCode.PIPELINE
+    error_code = "E_SESSION"
+
+
+class SessionNotFoundError(SessionError):
+    error_code = "E_SESSION_NOT_FOUND"
+
+
+class SessionEndedError(SessionError):
+    error_code = "E_SESSION_ENDED"
+
+
+class SessionExpiredError(SessionError):
+    error_code = "E_SESSION_EXPIRED"
+
+
+class SessionLimitError(SessionError):
+    error_code = "E_SESSION_LIMIT"
+
+
+class TurnLimitError(SessionError):
+    error_code = "E_TURN_LIMIT"
+
+
+class SessionRateLimitError(SessionError):
+    error_code = "E_SESSION_RATE_LIMIT"
+
+
+class InputTooLongError(PersonSimError):
+    exit_code = ExitCode.INPUT
+    error_code = "E_INPUT_TOO_LONG"
