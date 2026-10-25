@@ -125,7 +125,7 @@ python tools\convert_wechat_md.py "D:\export.md" --out data\chat.txt --speaker-a
 ## Project status
 
 - **Branch**: `main`
-- **Last commit (excl. this file)**: `9955310` chore: establish audited baseline for open-source release (2026-10-25)
+- **Last commit (excl. this file)**: `e3e7535` docs: refresh dynamic status after baseline commit (2026-10-25)
 - **Working tree (excl. this file)**: clean
 - **Upstream**: not set
 <!-- AUTO-STATUS-END -->
