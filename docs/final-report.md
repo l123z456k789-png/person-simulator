@@ -7,7 +7,7 @@
 - **PROJECT_ROOT**：`<PROJECT_ROOT>`
 - **工程测试**：83 passed / 0 failed / 0 skipped（`.venv\Scripts\python.exe -m pytest -q`）
 - **Whole-chat**：DeepSeek `deepseek-flash` 已实跑 13,331 条训练消息；system prompt 1,592 字符；实际 390,632 input / 1,605 output token；成本约 $0.06。
-- **A/B**：30 题、60 次调用完成；总成本 $0.037697；B 缓存 30/30。未完成人工盲评，不能宣布整体胜负；题面/参考对齐仍有问题。
+- **A/B**：30 题、60 次调用完成；总成本 $0.037697；B 缓存 30/30。单评审偏好盲评为 A 16 / B 10 / 都不像 4，但未完成五维人工评分、没有第二位评审或重复生成，不能宣布整体胜负；题面/参考对齐仍有问题。
 - **Mock E2E**：通过。A/B 双目标、长文本多层汇总、失败后 resume、render 均已实跑。
 - **真实 API**：Whole-chat 已用 DeepSeek `deepseek-flash` 实跑；evidence 模式真实 API 未验证。
 - **真实模拟质量**：not_evaluated。已采集 30 题 A/B 真实回答，但未完成人工五维评分。
@@ -41,7 +41,7 @@
 ## 未满足或未验证
 
 1. evidence 模式真实 API 协议与费用路径：not_verified。
-2. 真实人物相似度：not_evaluated；A/B 只做了单句探测，未盲评。
+2. 真实人物相似度：not_evaluated；A/B 只做了单评审偏好选择，未完成五维评分、第二评审和重复生成。
 3. 语义解释正确性：程序只做结构与引用校验，语义质量仍依赖人工评估。
 4. 超长导出的 compact 版本：未实现；主文件超 32000 字符时只记录、不截断。
 5. 非 OpenAI-compatible 服务：明确 unsupported，需新 adapter。

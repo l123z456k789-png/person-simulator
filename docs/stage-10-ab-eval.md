@@ -1,6 +1,6 @@
 # 阶段 10：A/B 人物模拟对照评估
 
-- **状态**：生成完成；人工盲评未完成
+- **状态**：生成完成；单评审偏好盲评完成；五维人工评分未完成
 - **范围**：30 题留出评估，A=system_prompt.md，B=完整训练聊天
 - **调用**：60 次（30×A/B），模型 `deepseek-flash`，thinking disabled，max_output 6144
 - **成本**：**$0.037697**；B 的 30 次调用全部命中 390,144 token 缓存
@@ -11,7 +11,8 @@
   - 两者都在 0029/0030 编造未知历史；B 0030 的编造更长、更具体
   - 未发现 target/interlocutor 身份互换
   - 仍有题面/参考对齐问题，不能据此宣布整体胜负或统计显著
-- **人工评分**：`ratings_template.csv` 60 行留空；尚未有了解目标人物的评审者评分
-- **下一单因素**：修评估题上下文完整性，再重跑；不是改人物提示词
-- **产物**：`eval_runs/<local-real>/ab_full/`（calls、blind_pairs、blind_key、ratings_template、evaluation_report、run_summary）
+- **人工评分**：`ratings_template.csv` 60 行留空；尚未有了解目标人物的评审者完成五维 1—5 分评分
+- **补充记录（2026-10-25）**：一位了解目标人物的评审者完成了偏好盲评（X/Y/都不像），结果为 A 16、B 10、都不像 4；这只是偏好选择，不是五维评分，也没有第二位评审、重复生成或统计检验，因此仍不能宣布 A/B 整体胜负
+- **下一单因素**：旧 A/B 题面上下文不完整；新的 `eval prepare` 已改为 `context-v2`，把最近上下文写进题面，但本次 30 题 A/B 尚未用新题面重跑
+- **产物**：`eval_runs/<local-real>/ab_full/`（calls、blind_pairs、blind_key、ratings_template、evaluation_report、run_summary、preference_summary）；该目录被 `.gitignore` 排除，不在公开仓库中
 - **真实 API**：DeepSeek whole-chat 已验证；证据模式未验证

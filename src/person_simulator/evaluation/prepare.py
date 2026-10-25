@@ -5,7 +5,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -100,48 +99,67 @@ def _context_for(
     ]
 
 
+def _render_context(context: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        f"{item['speaker']}: {item['text']}" for item in context
+    )
+
+
 def _prompt_for(dimension: str, target: str, interlocutor: str, context: list[dict[str, Any]]) -> str:
-    last = context[-1]["text"] if context else ""
+    transcript = _render_context(context)
     if dimension == "language":
         return (
-            f"请只以{target}的口吻回复下面这句话，保持你平时的说话风格：{last}"
+            f"以下是{target}与{interlocutor}的一段聊天记录：\n{transcript}\n\n"
+            f"请只以{target}的口吻，直接回复最后一条消息，保持平时的说话风格。"
+            "不要解释，也不要总结规则。"
         )
     if dimension == "behavior":
-        joined = " / ".join(item["text"] for item in context[-2:])
         return (
-            f"情境：{target}与{interlocutor}的对话进行到“{joined}”。"
-            f"请以{target}的方式回应。"
+            f"以下是{target}与{interlocutor}的一段聊天记录：\n{transcript}\n\n"
+            f"请以{target}的方式直接回应最后一条消息。不要解释。"
         )
     return (
-        f"你（{target}）正在和{interlocutor}聊天。对方最后说：{last}。请直接回应对方。"
+        f"你（{target}）正在和{interlocutor}聊天。以下是最近的对话：\n{transcript}\n\n"
+        "请直接回应最后一条消息。不要解释。"
     )
 
 
 def _guide(target: str, interlocutor: str) -> str:
     return f"""# 人物模拟评估指南
 
-本包评估的是 `person_simulation.md` 在网页版 AI 中扮演 **{target}**（对话对象为 **{interlocutor}**）的表现，不是人格复制概率。
+本包评估的是人物模拟材料在网页版 AI 中扮演 **{target}**（对话对象为 **{interlocutor}**）的表现，不是人格复制概率，也不是“像本人”的自动证明。
 
 ## 使用步骤
 
 1. 用 `train_chat.txt` 重新执行 `build`（不要用全量聊天建模，否则留出集泄漏）。
-2. 记录生成文件的 SHA256，填入每条 response 的 `persona_hash`。
-3. 把 `person_simulation.md` 上传到选定网页版 AI，开启新会话。
-4. 按 `cases.jsonl` 逐题提问；`reviewer_references.json` 只给评审者，不要给被测模型。
-5. 把回答填入 `responses.jsonl`，至少同一条件下重复两次。
-6. 至少一位了解原人物的评审按 `ratings.template.csv` 打分；推荐两人独立盲评。
-7. 运行 `python -m person_simulator eval score --bundle <本目录> --responses responses.jsonl --ratings ratings.csv`。
+2. 记录实际上传文件的 SHA256，填入每条 response 的 `persona_hash`。
+3. 把 `person_simulation.md`（若该 run 没有该文件，则用 `system_prompt.md`）上传到选定网页版 AI，开启新会话。
+4. 按 `cases.jsonl` 逐题提问，只问 `status=candidate` 的题；`unsupported` 槽位跳过。题面已经包含该题依赖的最近上下文。`reviewer_references.json` 只给评审者，不要给被测模型。
+5. 把回答原样填入 `responses.jsonl`；同一条件下每题至少重复两次，每次使用新会话。
+6. 至少一位了解原人物的评审按 `ratings.template.csv` 打分；推荐两位评审独立评分。
+7. 运行 `person-sim eval score --bundle <本目录> --responses responses.jsonl --ratings ratings.csv`。
 
 ## 评分锚点
 
 - 1 = 明显不符合或违背证据
+- 2 = 多处不符合可见证据
 - 3 = 部分符合但明显泛化
 - 4 = 符合可见习惯，仅有轻微偏差
 - 5 = 符合可见习惯且无明显冲突
 
-`unsupported_history` 标记资料本身不足的历史题；`identity_error` 标记认错人/角色混淆；`fabricated_history` 标记编造未给出历史。评分不是“像本人”的概率。
+评分只针对该题的主维度。不要把一个回答重复计入多个维度。
 
-## 五维与八项覆盖的对应
+## 标记
+
+- `unsupported_history`：这道题本身缺少可评分证据；标记后本题跳过，整体数据会被判为不完整。
+- `identity_error`：认错人、把自己当成对方、角色混淆。
+- `fabricated_history`：编造聊天中没有出现过的具体姓名、日期、事件或原话。
+- `factual_error`：与聊天中已经出现的事实直接冲突（例如记错共同经历、时间、地点）。
+- `unsupported_inference`：没有证据却作出确定断言，或把单次行为推广成稳定人格。
+
+任何标记为 true 都会使质量门槛失败；不要用“整体感觉不错”覆盖具体错误。
+
+## 五维与覆盖
 
 - `language`：语言风格相似性 + 表达长度/语气一致性
 - `behavior`：行为模式一致性 + 情绪反应合理性（含冲突应对）
@@ -149,13 +167,13 @@ def _guide(target: str, interlocutor: str) -> str:
 - `novel_situation`：新情境下的模拟表现 + 未出现事件的合理推演
 - `history_accuracy`：聊天中已出现事实的准确性 + 未出现事实的承认未知
 
-不要把同一题重复计入两个维度；需要更细的结论时，在备注里写明失败类型。
+`prepare` 默认生成 30 个槽位（五维各 6 个），其中可能有 `unsupported`；只对 `candidate` 题采集和评分。`status=evaluated` 只表示真实采集且数据覆盖达到最低门槛；`gate_passed` 才是本项目的质量门槛。两者都不能替代统计显著性。
 
 ## 状态
 
 - `not_evaluated`：没有真实采集与人工评分。
-- `insufficient_data`：样本、重复次数或维度覆盖不足。
-- `evaluated`：真实采集、人工确认且达到最低样本门槛；仍需看具体分数与局限。
+- `insufficient_data`：样本、重复次数、题目覆盖或评分覆盖不足。
+- `evaluated`：真实采集、人工确认且达到最低样本门槛；仍需看具体分数、标记与局限。
 
 Mock 回答或合成评分只能测试评分器计算，不能证明真实效果。
 """
@@ -368,6 +386,7 @@ def prepare_eval(
                 "source": "human_collected",
             }
             for case in cases
+            if case.get("status") != "unsupported"
             for repeat in (1, 2)
         ],
     )
@@ -383,6 +402,8 @@ def prepare_eval(
                 "unsupported_history",
                 "identity_error",
                 "fabricated_history",
+                "factual_error",
+                "unsupported_inference",
                 "notes",
             ]
         )
@@ -402,6 +423,8 @@ def prepare_eval(
         "holdout_message_range": [holdout_messages[0].id, holdout_messages[-1].id],
         "holdout_ratio": HOLDOUT_RATIO,
         "min_sessions": MIN_SESSIONS,
+        "case_format": "context-v2",
+        "scoring_schema": "2",
         "created_at": utcnow().isoformat(),
         "notes": "按完整会话划分；未随机打散单条消息；评测时必须用 train_chat.txt 重新建模。",
     }

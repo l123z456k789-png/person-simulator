@@ -61,6 +61,48 @@ def test_insufficient_sessions(tmp_path):
     assert (tmp_path / "bundle" / "split_manifest.json").is_file()
 
 
+RATING_HEADER = [
+    "case_id",
+    "run_id",
+    "rater",
+    "dimension",
+    "score",
+    "unsupported_history",
+    "identity_error",
+    "fabricated_history",
+    "factual_error",
+    "unsupported_inference",
+    "notes",
+]
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=RATING_HEADER)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _fill_bundle(bundle: Path, *, mock: bool = False) -> tuple[Path, Path]:
     cases = [json.loads(line) for line in (bundle / "cases.jsonl").read_text(encoding="utf-8").splitlines()]
     responses = []
@@ -79,41 +121,141 @@ def _fill_bundle(bundle: Path, *, mock: bool = False) -> tuple[Path, Path]:
                 }
             )
     responses_path = bundle / "responses.jsonl"
-    responses_path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in responses) + "\n",
-        encoding="utf-8",
-    )
+    _write_jsonl(responses_path, responses)
     ratings_path = bundle / "ratings.csv"
-    with ratings_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "case_id",
-                "run_id",
-                "rater",
-                "dimension",
-                "score",
-                "unsupported_history",
-                "identity_error",
-                "fabricated_history",
-                "notes",
-            ]
-        )
-        for case in cases:
-            writer.writerow(
-                [
-                    case["case_id"],
-                    "run1",
-                    "rater1",
-                    case["primary_dimension"],
-                    5,
-                    "false",
-                    "false",
-                    "false",
-                    "",
-                ]
-            )
+    _write_csv(
+        ratings_path,
+        [
+            {
+                "case_id": case["case_id"],
+                "run_id": "run1",
+                "rater": "rater1",
+                "dimension": case["primary_dimension"],
+                "score": "5",
+                "unsupported_history": "false",
+                "identity_error": "false",
+                "fabricated_history": "false",
+                "factual_error": "false",
+                "unsupported_inference": "false",
+                "notes": "",
+            }
+            for case in cases
+        ],
+    )
     return responses_path, ratings_path
+
+
+def test_responses_template_excludes_unsupported_cases(tmp_path):
+    path = tmp_path / "short-holdout.txt"
+    lines = []
+    for session in range(6):
+        for index in range(20):
+            speaker = "A" if index % 2 == 0 else "B"
+            lines.append(f"{speaker}: 会话{session}第{index}条消息内容。")
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+    result = prepare_eval(path, target="A", out=tmp_path / "bundle")
+    cases = _read_jsonl(result.bundle / "cases.jsonl")
+    supported = {case["case_id"] for case in cases if case["status"] == "candidate"}
+    unsupported = {case["case_id"] for case in cases if case["status"] == "unsupported"}
+    template = _read_jsonl(result.bundle / "responses.template.jsonl")
+
+    assert unsupported
+    assert {row["case_id"] for row in template} == supported
+    assert not ({row["case_id"] for row in template} & unsupported)
+
+
+def test_prepare_prompts_include_the_full_context(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    cases = _read_jsonl(result.bundle / "cases.jsonl")
+    case = next(
+        item
+        for item in cases
+        if item["primary_dimension"] == "language"
+        and item["status"] == "candidate"
+    )
+
+    assert len(case["context_messages"]) >= 2
+    for item in case["context_messages"]:
+        assert item["text"] in case["prompt"]
+
+
+def test_prepare_manifest_records_context_case_format(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    split = json.loads(
+        (result.bundle / "split_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert split["case_format"] == "context-v2"
+
+
+def test_score_requires_repeats_for_every_supported_case(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    responses, ratings = _fill_bundle(result.bundle)
+    cases = _read_jsonl(result.bundle / "cases.jsonl")
+    missing_case = cases[0]["case_id"]
+    remaining = [row for row in _read_jsonl(responses) if row["case_id"] != missing_case]
+    _write_jsonl(responses, remaining)
+
+    report = score_eval(bundle=result.bundle, responses_path=responses, ratings_path=ratings)
+
+    assert report["responses_min_repeats"] == 0
+    assert report["status"] == "insufficient_data"
+    assert report["gate"]["all_supported_cases_have_repeats"] is False
+
+
+def test_score_requires_every_supported_case_to_be_rated(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    responses, ratings = _fill_bundle(result.bundle)
+    cases = _read_jsonl(result.bundle / "cases.jsonl")
+    missing_case = next(
+        case["case_id"] for case in cases if case["primary_dimension"] == "language"
+    )
+    first_rater = [
+        row for row in _read_csv(ratings) if row["case_id"] != missing_case
+    ]
+    second_rater = [
+        {**row, "rater": "rater2"}
+        for row in first_rater
+    ]
+    _write_csv(ratings, [*first_rater, *second_rater])
+
+    report = score_eval(bundle=result.bundle, responses_path=responses, ratings_path=ratings)
+
+    assert report["status"] == "insufficient_data"
+    assert report["gate"]["all_supported_cases_rated"] is False
+    assert report["unrated_supported_cases"] == [missing_case]
+    assert report["dimensions"]["language"]["count"] == 10
+    assert report["dimensions"]["language"]["missing"] == 1
+
+
+def test_score_counts_factual_errors_and_unsupported_inference(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    responses, ratings = _fill_bundle(result.bundle)
+    rows = _read_csv(ratings)
+    rows[0]["factual_error"] = "true"
+    rows[1]["unsupported_inference"] = "true"
+    _write_csv(ratings, rows)
+
+    report = score_eval(bundle=result.bundle, responses_path=responses, ratings_path=ratings)
+
+    assert report["factual_errors"] == 1
+    assert report["unsupported_inferences"] == 1
+    assert report["gate"]["no_factual_error"] is False
+    assert report["gate"]["no_unsupported_inference"] is False
+    assert report["gate_passed"] is False
+
+
+def test_score_rejects_dimension_mismatch(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    responses, ratings = _fill_bundle(result.bundle)
+    rows = _read_csv(ratings)
+    rows[0]["dimension"] = "behavior" if rows[0]["dimension"] == "language" else "language"
+    _write_csv(ratings, rows)
+
+    with pytest.raises(EvidenceError):
+        score_eval(bundle=result.bundle, responses_path=responses, ratings_path=ratings)
 
 
 def test_score_rejects_mock_responses(tmp_path):
