@@ -115,7 +115,7 @@ Release 说明至少包含：版本、变更、安装、快速开始、隐私/�
 - 标签：`v0.2.1`
 - Release：https://github.com/l123z456k789-png/person-simulator/releases/tag/v0.2.1
 - 资产：wheel `person_simulator-0.2.1-py3-none-any.whl`、sdist `person_simulator-0.2.1.tar.gz`
-- GitHub Actions：由 `main` 推送触发；发布前本地全量测试、构建、干净 venv 安装和 Mock 检查均通过。
+- GitHub Actions：CI 通过（Windows/Linux × Python 3.11/3.12，测试与构建检查）。
 
 ### 0.2.0
 
