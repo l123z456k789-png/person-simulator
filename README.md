@@ -261,8 +261,8 @@ MIT。见 `LICENSE`。
 
 ## Project status
 
-- **Branch**: `feat/mode-c`
-- **Last commit (excl. this file)**: `d355650` fix: finish public-release hardening (2026-10-25)
+- **Branch**: `main`
+- **Last commit (excl. this file)**: `d42b6eb` docs: finalize v0.2.0 release record (2026-10-25)
 - **Working tree (excl. this file)**: clean
-- **Upstream**: not set
+- **Upstream**: `origin/main`
 <!-- AUTO-STATUS-END -->
