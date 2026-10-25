@@ -180,6 +180,14 @@ class _BaseHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _drain_body(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if length > 0:
+            self.rfile.read(length)
+
     def _read_json(self) -> dict[str, object]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -313,6 +321,7 @@ class PublicHandler(_BaseHandler):
                 self._json(404, {"error_code": "E_NOT_FOUND", "message": "not found"})
                 return
             if path == "/api/session":
+                self._drain_body()
                 token = self._bearer()
                 if not token:
                     raise AccessDeniedError("缺少访问令牌", stage="server")
@@ -348,6 +357,7 @@ class PublicHandler(_BaseHandler):
                 )
                 return
             if path == "/api/session/end":
+                self._drain_body()
                 session = self._session()
                 self.context.manager.end(session.id)
                 self.send_response(204)
@@ -430,6 +440,7 @@ class AdminHandler(_BaseHandler):
                 )
                 return
             if path == "/admin/shutdown":
+                self._drain_body()
                 self.context.shutdown_event.set()
                 self._json(202, {"status": "shutting_down"})
                 return

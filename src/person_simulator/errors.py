@@ -202,3 +202,8 @@ class AccessDeniedError(PersonSimError):
 class ForbiddenError(PersonSimError):
     exit_code = ExitCode.INPUT
     error_code = "E_FORBIDDEN"
+
+
+class ClientError(PersonSimError):
+    exit_code = ExitCode.API
+    error_code = "E_CLIENT"

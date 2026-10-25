@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import platform
+import secrets
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from person_simulator import __version__
 from person_simulator.chunking import build_chunk_plan
 from person_simulator.config import load_settings
-from person_simulator.errors import ConfigError, PersonSimError, PipelineError
+from person_simulator.errors import (
+    ConfigError,
+    PersonSimError,
+    PipelineError,
+    RunModeError,
+    StorageError,
+)
 from person_simulator.evaluation.prepare import prepare_eval
 from person_simulator.evaluation.score import score_eval, write_quality_report
 from person_simulator.models import Manifest
@@ -20,6 +30,15 @@ from person_simulator.parser import parse_chat
 from person_simulator.pipeline import build_run, render_run, resume_run
 from person_simulator.providers import build_client
 from person_simulator.providers.base import ModelRequest
+from person_simulator.runtime.client import AdminClient, SimulationClient
+from person_simulator.runtime.invite import (
+    InvitePayload,
+    read_invite,
+    write_invite,
+)
+from person_simulator.runtime.models import Audience
+from person_simulator.runtime.persona import load_runtime_persona
+from person_simulator.server import InviteRegistry, create_server
 from person_simulator.storage import RunStore
 from person_simulator.wholechat.pipeline import (
     build_whole,
@@ -350,6 +369,250 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _admin_token(args: argparse.Namespace, *, generate: bool = False) -> tuple[str, str]:
+    path = getattr(args, "admin_token_file", None)
+    if path:
+        try:
+            token = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(
+                "管理员令牌文件不可读", stage="admin", hint=str(path)
+            ) from exc
+        if not token:
+            raise ConfigError("管理员令牌文件为空", stage="admin", hint=str(path))
+        return token, "file"
+    token = os.environ.get("PSIM_ADMIN_TOKEN")
+    if token:
+        return token, "env"
+    if generate:
+        return secrets.token_urlsafe(32), "generated"
+    raise ConfigError(
+        "缺少管理员令牌",
+        stage="admin",
+        hint="设置 PSIM_ADMIN_TOKEN 或使用 --admin-token-file",
+    )
+
+
+def _invite_passphrase(args: argparse.Namespace) -> str:
+    env_name = getattr(args, "passphrase_env", "PSIM_INVITE_PASSPHRASE")
+    value = os.environ.get(env_name)
+    if value:
+        return value
+    if not sys.stdin.isatty():
+        raise ConfigError(
+            "缺少邀请口令",
+            stage="invite",
+            hint=f"设置环境变量 {env_name}，或在交互终端运行",
+        )
+    value = getpass.getpass("邀请口令: ")
+    if not value:
+        raise ConfigError("邀请口令不能为空", stage="invite")
+    return value
+
+
+def _apply_simulation_args(settings, args: argparse.Namespace) -> None:
+    updates: dict[str, Any] = {}
+    for attr in (
+        "host",
+        "port",
+        "allow_lan",
+        "secure_cookies",
+        "max_sessions",
+        "max_turns",
+        "max_input_chars",
+        "requests_per_minute",
+    ):
+        value = getattr(args, attr, None)
+        if value is not None:
+            updates[attr] = value
+    sim_output = getattr(args, "sim_max_output_tokens", None)
+    if sim_output is not None:
+        updates["max_output_tokens"] = sim_output
+    if getattr(args, "allowed_host", None):
+        updates["allowed_hosts"] = [
+            *settings.simulation.allowed_hosts,
+            *args.allowed_host,
+        ]
+    if updates:
+        settings.simulation = settings.simulation.model_copy(update=updates)
+
+
+def _check_public_bind(settings) -> None:
+    if (
+        settings.simulation.host not in {"127.0.0.1", "localhost", "::1"}
+        and not settings.simulation.allow_lan
+    ):
+        raise ConfigError(
+            "非 loopback 监听需要显式 --allow-lan",
+            stage="serve",
+            hint="默认只允许 127.0.0.1；局域网请显式开启",
+        )
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    settings = _settings(args)
+    _apply_simulation_args(settings, args)
+    _check_public_bind(settings)
+    loaded = load_runtime_persona(args.run, audience=args.audience)
+    if loaded.persona.is_mock != settings.is_mock:
+        raise RunModeError(
+            "run 的 Mock/API 模式与当前 --mode 不一致",
+            stage="serve",
+            hint="Mock run 使用 --mode mock；真实 run 使用 --mode api",
+        )
+    if settings.model.mode == "api" and not settings.api_key:
+        raise ConfigError(
+            "api 模式需要 PSIM_API_KEY；不会自动降级为 mock",
+            stage="serve",
+        )
+    if args.check:
+        print("status ready")
+        print(f"runtime_schema {loaded.persona.schema_version}")
+        print(f"run_id {loaded.persona.run_id}")
+        print(f"strategy {loaded.persona.strategy}")
+        print(f"audience {loaded.persona.audience.value}")
+        print(f"is_mock {str(loaded.persona.is_mock).lower()}")
+        print(f"replay_guard {loaded.persona.replay_guard}")
+        print(f"host {settings.simulation.host}")
+        print(f"port {settings.simulation.port}")
+        return 0
+
+    admin_token, source = _admin_token(args, generate=True)
+    server = create_server(
+        persona=loaded.persona,
+        settings=settings,
+        host=settings.simulation.host,
+        port=settings.simulation.port,
+        registry=InviteRegistry(),
+        admin_token=admin_token,
+        replay_messages=loaded.replay_messages,
+    )
+    print("status ready")
+    print(f"run_id {loaded.persona.run_id}")
+    print(f"public_url {server.public_url}")
+    print(f"admin_url {server.admin_url}")
+    print(f"admin_token_source {source}")
+    if source == "generated":
+        print(f"admin_token {admin_token}")
+    print(
+        "next "
+        f"person-sim invite create --server {server.admin_url} "
+        f"--endpoint {server.public_url} --out invite.psim"
+    )
+    try:
+        server.serve_forever()
+    finally:
+        server.shutdown()
+    print("status stopped")
+    return 0
+
+
+def cmd_invite_create(args: argparse.Namespace) -> int:
+    out = Path(args.out)
+    if out.exists():
+        raise StorageError("邀请文件已存在，拒绝覆盖", stage="invite", hint=str(out))
+    token, _ = _admin_token(args)
+    passphrase = _invite_passphrase(args)
+    admin = AdminClient(args.server, token)
+    try:
+        created = admin.create_invite(
+            label=args.label,
+            expires_in_seconds=args.expires_in,
+            max_sessions=args.max_sessions,
+        )
+    finally:
+        admin.close()
+    payload = InvitePayload(
+        endpoint=args.endpoint,
+        token=str(created["token"]),
+        expires_at=datetime.fromisoformat(str(created["expires_at"])),
+        label=str(created.get("label", args.label)),
+        max_sessions=args.max_sessions,
+    )
+    payload.ensure_valid()
+    write_invite(out, payload, passphrase)
+    endpoint = args.endpoint.rstrip("/")
+    print(f"invite {out}")
+    print(f"web_url {endpoint}/?token={payload.token}")
+    print(f"expires_at {payload.expires_at.isoformat()}")
+    return 0
+
+
+def cmd_invite_revoke(args: argparse.Namespace) -> int:
+    token, _ = _admin_token(args)
+    admin = AdminClient(args.server, token)
+    try:
+        admin.revoke_invite(args.invite_id)
+    finally:
+        admin.close()
+    print(f"revoked {args.invite_id}")
+    return 0
+
+
+def _print_notices(notices: object) -> None:
+    if isinstance(notices, list):
+        for notice in notices:
+            print(f"notice: {notice}", file=sys.stderr)
+
+
+def cmd_connect(args: argparse.Namespace) -> int:
+    passphrase = _invite_passphrase(args)
+    payload = read_invite(args.invite, passphrase)
+    client = SimulationClient(payload.endpoint, payload.token)
+    try:
+        client.create_session()
+        if args.message:
+            reply = client.chat(args.message)
+            print(reply["reply"])
+            _print_notices(reply.get("notices"))
+            client.end_session()
+            return 0
+
+        print("输入 /exit 结束会话。", file=sys.stderr)
+        while True:
+            try:
+                text = input("你: ")
+            except (EOFError, KeyboardInterrupt):
+                break
+            if text.strip() in {"/exit", "/quit"}:
+                break
+            if not text.strip():
+                continue
+            reply = client.chat(text)
+            print(f"模拟: {reply['reply']}")
+            _print_notices(reply.get("notices"))
+        client.end_session()
+        return 0
+    finally:
+        client.close()
+
+
+def cmd_session_list(args: argparse.Namespace) -> int:
+    token, _ = _admin_token(args)
+    admin = AdminClient(args.server, token)
+    try:
+        rows = admin.list_sessions()
+    finally:
+        admin.close()
+    for row in rows:
+        print(
+            f"{row.get('id')} state={row.get('state')} "
+            f"turns={row.get('turns')} invite={row.get('invite_id')}"
+        )
+    return 0
+
+
+def cmd_session_delete(args: argparse.Namespace) -> int:
+    token, _ = _admin_token(args)
+    admin = AdminClient(args.server, token)
+    try:
+        admin.delete_session(args.session_id)
+    finally:
+        admin.close()
+    print(f"deleted {args.session_id}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="person-sim",
@@ -422,6 +685,79 @@ def build_parser() -> argparse.ArgumentParser:
     eval_score.add_argument("--responses", required=True)
     eval_score.add_argument("--ratings", required=True)
     eval_score.set_defaults(func=cmd_eval_score)
+
+    serve = subparsers.add_parser("serve", help="启动去中心化第三方模拟服务")
+    serve.add_argument("--run", required=True, help="已完成且通过校验的 run 目录")
+    serve.add_argument("--check", action="store_true", help="只校验 run 与配置，不监听")
+    _add_config_args(serve, with_mode=True)
+    serve.add_argument("--host", help="监听地址；默认取配置，通常 127.0.0.1")
+    serve.add_argument("--port", type=int, help="公开监听端口")
+    serve.add_argument("--allow-lan", action="store_true", default=None)
+    serve.add_argument("--secure-cookies", action="store_true", default=None)
+    serve.add_argument(
+        "--audience",
+        choices=["guest", "original"],
+        default="guest",
+        help="第三方默认观众：guest 或 original",
+    )
+    serve.add_argument(
+        "--allowed-host",
+        action="append",
+        default=None,
+        help="额外允许的 Host（隧道域名可重复传入）",
+    )
+    serve.add_argument("--max-sessions", type=int)
+    serve.add_argument("--max-turns", type=int)
+    serve.add_argument("--max-input-chars", type=int)
+    serve.add_argument("--sim-max-output-tokens", type=int)
+    serve.add_argument("--requests-per-minute", type=int)
+    serve.add_argument("--admin-token-file")
+    serve.set_defaults(func=cmd_serve)
+
+    invite_parser = subparsers.add_parser("invite", help="创建或撤销加密邀请")
+    invite_sub = invite_parser.add_subparsers(
+        dest="invite_command", required=True
+    )
+    invite_create = invite_sub.add_parser("create", help="创建加密邀请文件")
+    invite_create.add_argument("--server", required=True, help="管理员接口地址")
+    invite_create.add_argument("--endpoint", required=True, help="C 可访问的公开地址")
+    invite_create.add_argument("--out", required=True, help="邀请文件输出路径")
+    invite_create.add_argument("--label", default="", help="邀请备注")
+    invite_create.add_argument("--expires-in", type=int, default=3600)
+    invite_create.add_argument("--max-sessions", type=int, default=None)
+    invite_create.add_argument(
+        "--passphrase-env", default="PSIM_INVITE_PASSPHRASE"
+    )
+    invite_create.add_argument("--admin-token-file")
+    invite_create.set_defaults(func=cmd_invite_create)
+
+    invite_revoke = invite_sub.add_parser("revoke", help="撤销邀请")
+    invite_revoke.add_argument("--server", required=True)
+    invite_revoke.add_argument("--invite-id", required=True)
+    invite_revoke.add_argument("--admin-token-file")
+    invite_revoke.set_defaults(func=cmd_invite_revoke)
+
+    connect = subparsers.add_parser(
+        "connect", help="解密邀请并连接第三方模拟服务"
+    )
+    connect.add_argument("--invite", required=True)
+    connect.add_argument("--message", help="只发送一条消息后退出")
+    connect.add_argument("--passphrase-env", default="PSIM_INVITE_PASSPHRASE")
+    connect.set_defaults(func=cmd_connect)
+
+    session_parser = subparsers.add_parser("session", help="管理模拟会话")
+    session_sub = session_parser.add_subparsers(
+        dest="session_command", required=True
+    )
+    session_list = session_sub.add_parser("list", help="列出会话元数据")
+    session_list.add_argument("--server", required=True)
+    session_list.add_argument("--admin-token-file")
+    session_list.set_defaults(func=cmd_session_list)
+    session_delete = session_sub.add_parser("delete", help="删除单个会话")
+    session_delete.add_argument("--server", required=True)
+    session_delete.add_argument("session_id")
+    session_delete.add_argument("--admin-token-file")
+    session_delete.set_defaults(func=cmd_session_delete)
 
     return parser
 
