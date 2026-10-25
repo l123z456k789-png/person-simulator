@@ -272,12 +272,57 @@ max_output_tokens = 4096
 - 当前只支持 HTTPS + Bearer Key + 非流式 `POST /chat/completions` 的 OpenAI-compatible 服务。
 - API Key 只从环境变量读取，不写进 `config.toml`。
 
-设置 Key 并检查：
+##### API Key 到底怎么配置
+
+项目只读取一个环境变量：`PSIM_API_KEY`。
+
+它**不会**读取 `config.toml` 里的 `api_key`，**不会**自动加载 `.env` 文件，也没有 `--api-key` 命令行参数。不要把 Key 写进 `config.toml`；当前配置解析不接受这个项。这样做是为了避免 Key 进入配置文件、Git 提交、manifest、日志或进程参数。
+
+**Windows PowerShell（当前终端有效）：**
 
 ```powershell
 $env:PSIM_API_KEY = "<你的 API Key>"
 person-sim doctor --config config.toml
 ```
+
+`doctor` 输出里应该能看到：
+
+```text
+mode api
+provider openai_chat
+api_key_present yes
+```
+
+如果还是 `api_key_present no`，说明当前终端没有设置成功，或者你设置到了另一个终端。
+
+`$env:` 只对当前 PowerShell 进程及其子进程有效。关掉终端、换一个终端，或者把 `serve` 放到另一个窗口启动，都需要在**实际运行命令的那个终端**重新设置。
+
+**macOS / Linux（当前 shell 有效）：**
+
+```bash
+export PSIM_API_KEY="<你的 API Key>"
+person-sim doctor --config config.toml
+```
+
+**如果确实需要持久化：**
+
+Windows 可以用 `setx`：
+
+```powershell
+setx PSIM_API_KEY "<你的 API Key>"
+```
+
+`setx` 只影响之后新开的终端，不影响当前终端；它会把 Key 写入用户环境变量，公共电脑或多人账户不要这样做。
+
+macOS / Linux 可以把 `export` 写进自己的 shell 配置文件（例如 `~/.zshrc`），但这同样会让 Key 留在本机配置里。更稳妥的方式是用密码管理器、系统密钥环或临时注入，而不是长期明文保存。
+
+**注意：**
+
+- 不要把 Key 写进 `config.toml`、README、Issue、截图或 Git。
+- 不要把 Key 直接写在命令历史里；如果已经写入，轮换 Key。
+- `doctor --probe-api` 会发一次真实请求，可能产生费用；没有明确授权时不要运行。
+- Mode C 中，所有者启动 `serve --mode api` 的进程需要 `PSIM_API_KEY`；被邀请者不需要 API Key。浏览器体验者只需要访问链接；CLI 体验者需要邀请文件和口令。
+- `PSIM_API_KEY` 和 `PSIM_ADMIN_TOKEN` 不是一回事：前者是模型服务商的 Key，后者是本地管理员令牌。
 
 `doctor` 默认只检查配置，不发送请求。确认要花一次最小请求的费用时，再做真实探测：
 
