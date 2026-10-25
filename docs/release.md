@@ -2,9 +2,9 @@
 
 ## 版本
 
-- 当前版本：`0.2.0`（2026-10-25 已发布）。
+- 当前版本：`0.2.1`（2026-10-25 已发布）。
 - `__version__`、`pyproject.toml`、`CHANGELOG.md` 已对齐。
-- `resume` 接受 `0.1.0` 与 `0.2.0` 的旧 run 指纹，避免升级后无法续跑。
+- `resume` 接受 `0.1.0` 与 `0.2.x` 的旧 run 指纹，避免升级后无法续跑。
 - 版本号采用语义化版本；破坏 CLI/数据契约时必须升主版本并写迁移说明。
 
 ## 发布前检查
@@ -70,7 +70,21 @@ person-sim serve --run $env:TEMP\psim-release-runs\<run-id> --mode mock --check
 
 Release 说明至少包含：版本、变更、安装、快速开始、隐私/费用限制、已知问题、测试环境。
 
-## 验证记录（2026-10-25）
+## 验证记录（0.2.1，2026-10-25）
+
+环境：Windows，Python 3.12.10。
+
+- 完整测试：`180 passed`（47.65s）。
+- 构建：`python -m build` 成功生成 `person_simulator-0.2.1-py3-none-any.whl` 与 `person_simulator-0.2.1.tar.gz`。
+- 产物检查：wheel 57 个条目、sdist 134 个条目；均包含 `person_simulator/server/static/index.html`；未发现 `data/`、`runs/`、`exports/`、`eval_runs/`、`config.toml`、`.env`、`.psim`。
+- 干净 venv 安装 wheel：成功。
+- `person-sim --version`：`person-simulator 0.2.1`。
+- `person-sim doctor`：退出 0。
+- `person-sim build --input examples/sample_chat.txt --target A --mode mock`：退出 0。
+- `person-sim serve --run <mock-run> --mode mock --check`：退出 0，输出 `runtime-persona-1.0`。
+- 未调用真实模型 API；未使用真实聊天或真实人物档案。
+
+## 验证记录（0.2.0，2026-10-25）
 
 环境：Windows，Python 3.12.10，Git 2.55.0.windows.3。
 
@@ -94,7 +108,17 @@ Release 说明至少包含：版本、变更、安装、快速开始、隐私/�
 
 ## 发布记录
 
+### 0.2.1
+
 - 仓库：https://github.com/l123z456k789-png/person-simulator
+- 分支：`main`（默认）
+- 标签：`v0.2.1`
+- Release：https://github.com/l123z456k789-png/person-simulator/releases/tag/v0.2.1
+- 资产：wheel `person_simulator-0.2.1-py3-none-any.whl`、sdist `person_simulator-0.2.1.tar.gz`
+- GitHub Actions：由 `main` 推送触发；发布前本地全量测试、构建、干净 venv 安装和 Mock 检查均通过。
+
+### 0.2.0
+
 - 分支：`main`（默认）、`feat/mode-c`
 - 标签：`v0.2.0`（指向发布提交 `408e011`）
 - Release：https://github.com/l123z456k789-png/person-simulator/releases/tag/v0.2.0

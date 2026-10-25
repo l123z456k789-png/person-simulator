@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "person-simulator"
-version = "0.2.0"
+version = "0.2.1"
 description = "Turn a cleaned two-person chat into a standalone role-play profile, or host a controlled third-party simulation."
 readme = "README.md"
 license = "MIT"

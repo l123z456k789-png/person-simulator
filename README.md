@@ -102,7 +102,7 @@ person-sim --version
 最后应看到：
 
 ```text
-person-simulator 0.2.0
+person-simulator 0.2.1
 ```
 
 如果 PowerShell 不允许执行 `Activate.ps1`，不用强行改系统策略，可以直接用完整路径：
@@ -848,7 +848,7 @@ run 目录和 `exports/` 不会因为结束 Mode C 会话而删除；它们仍�
 
 ## 项目状态与参与方式
 
-当前版本：**0.2.0**（2026-10-25），默认分支 `main`。
+当前版本：**0.2.1**（2026-10-25），默认分支 `main`。
 
 已经验证的能力：
 

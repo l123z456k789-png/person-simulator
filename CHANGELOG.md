@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 - 2026-10-25
+
+### Changed
+
+- README 重构为「给真人看的说明书 + 给 AI 编码助手的操作说明」，补全安装、聊天文本准备、Mock/真实 API、输出使用、Mode C 体验流程、API Key 配置和常见问题。
+- 评估题面升级为 `context-v2`，把最近上下文写入题面；`responses.template.jsonl` 只包含受支持题，`ratings.template.csv` 预填受支持题行。
+- 评分器要求所有受支持题都有人工评分和至少两次回答，校验评分维度，并记录 `factual_error` / `unsupported_inference`。
+- 修正多评审情况下 `missing` 统计可能为负的问题，质量报告增加覆盖、重复次数和失败标记明细。
+
+### Known limitations
+
+- 真实 evidence API 全流程尚未验收。
+- 人物模拟质量尚未完成正式人工评估。
+- 不内置公网 TLS/ACME；公网共享依赖隧道/反向代理。
+- 客户端目前是 CLI；桌面程序、MCP adapter 未实现。
+- 无法绝对阻止推断、提示注入、截图转发或模型服务商访问。
+
 ## 0.2.0 - 2026-10-25
 
 ### Added
