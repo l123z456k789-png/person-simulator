@@ -114,7 +114,9 @@ class MockClient:
                 "MOCK 合成演示，不代表真实人物建模。\n"
                 "</person_simulation>"
             )
-        elif request.task_id.startswith("whole:simulate"):
+        elif request.task_id.startswith("whole:simulate") or request.task_id.startswith(
+            "simulate:"
+        ):
             content = "（MOCK 合成回复，不代表真实人物）"
         else:
             payload = self._payload(request)
