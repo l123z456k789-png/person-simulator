@@ -136,7 +136,7 @@ def _guide(target: str, interlocutor: str) -> str:
 3. 把 `person_simulation.md`（若该 run 没有该文件，则用 `system_prompt.md`）上传到选定网页版 AI，开启新会话。
 4. 按 `cases.jsonl` 逐题提问，只问 `status=candidate` 的题；`unsupported` 槽位跳过。题面已经包含该题依赖的最近上下文。`reviewer_references.json` 只给评审者，不要给被测模型。
 5. 把回答原样填入 `responses.jsonl`；同一条件下每题至少重复两次，每次使用新会话。
-6. 至少一位了解原人物的评审按 `ratings.template.csv` 打分；推荐两位评审独立评分。
+6. 至少一位了解原人物的评审按 `ratings.template.csv` 打分；模板已为每道受支持题生成一行。推荐两位评审独立评分；第二位复制这些行并修改 `rater`。
 7. 运行 `person-sim eval score --bundle <本目录> --responses responses.jsonl --ratings ratings.csv`。
 
 ## 评分锚点
@@ -391,22 +391,39 @@ def prepare_eval(
         ],
     )
     with (bundle / "ratings.template.csv").open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(
-            [
-                "case_id",
-                "run_id",
-                "rater",
-                "dimension",
-                "score",
-                "unsupported_history",
-                "identity_error",
-                "fabricated_history",
-                "factual_error",
-                "unsupported_inference",
-                "notes",
-            ]
-        )
+        fields = [
+            "case_id",
+            "run_id",
+            "rater",
+            "dimension",
+            "score",
+            "unsupported_history",
+            "identity_error",
+            "fabricated_history",
+            "factual_error",
+            "unsupported_inference",
+            "notes",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for case in cases:
+            if case.get("status") == "unsupported":
+                continue
+            writer.writerow(
+                {
+                    "case_id": case["case_id"],
+                    "run_id": "",
+                    "rater": "rater1",
+                    "dimension": case["primary_dimension"],
+                    "score": "",
+                    "unsupported_history": "false",
+                    "identity_error": "false",
+                    "fabricated_history": "false",
+                    "factual_error": "false",
+                    "unsupported_inference": "false",
+                    "notes": "",
+                }
+            )
 
     split_manifest = {
         "status": "prepared",

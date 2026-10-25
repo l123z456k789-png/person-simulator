@@ -59,7 +59,7 @@ eval_runs/<name>/
   cases.jsonl                 # 30 个题目槽位
   reviewer_references.json    # 参考答案/说明，只给评审者
   responses.template.jsonl    # 受支持题 × 2 次重复的空回答模板
-  ratings.template.csv        # 评分表头；只为受支持题填写
+  ratings.template.csv        # 受支持题的空评分行
   split_manifest.json         # 会话划分、哈希、case_format
   evaluation_guide.md         # 就地指南
   quality_report.json         # eval score 生成
@@ -123,7 +123,7 @@ eval_runs/<name>/
 
 ### 3.4 `ratings.csv`
 
-从 `ratings.template.csv` 复制。每行是“一位评审对一道受支持题的主维度评分”：
+从 `ratings.template.csv` 复制。模板已经为每道受支持题生成一行，`score` 留空；只填写这些行，不要为 `unsupported` 槽位补行。每行是“一位评审对一道受支持题的主维度评分”：
 
 ```csv
 case_id,run_id,rater,dimension,score,unsupported_history,identity_error,fabricated_history,factual_error,unsupported_inference,notes

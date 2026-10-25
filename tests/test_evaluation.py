@@ -166,6 +166,18 @@ def test_responses_template_excludes_unsupported_cases(tmp_path):
     assert not ({row["case_id"] for row in template} & unsupported)
 
 
+def test_ratings_template_contains_supported_cases(tmp_path):
+    result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
+    cases = _read_jsonl(result.bundle / "cases.jsonl")
+    supported = {case["case_id"] for case in cases if case["status"] == "candidate"}
+    rows = _read_csv(result.bundle / "ratings.template.csv")
+
+    assert len(rows) == len(supported)
+    assert {row["case_id"] for row in rows} == supported
+    assert all(row["score"] == "" for row in rows)
+    assert all(row["dimension"] for row in rows)
+
+
 def test_prepare_prompts_include_the_full_context(tmp_path):
     result = prepare_eval(_long_chat(tmp_path), target="A", out=tmp_path / "bundle")
     cases = _read_jsonl(result.bundle / "cases.jsonl")
