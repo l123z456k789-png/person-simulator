@@ -187,3 +187,8 @@ class SessionRateLimitError(SessionError):
 class InputTooLongError(PersonSimError):
     exit_code = ExitCode.INPUT
     error_code = "E_INPUT_TOO_LONG"
+
+
+class OutputBlockedError(PersonSimError):
+    exit_code = ExitCode.PIPELINE
+    error_code = "E_OUTPUT_BLOCKED"
