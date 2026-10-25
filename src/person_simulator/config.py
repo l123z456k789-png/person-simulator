@@ -33,6 +33,22 @@ SECTION_KEYS: dict[str, set[str]] = {
     "budget": {"max_repair_attempts", "max_context_splits", "max_requests_per_run"},
     "mock": {"context_window"},
     "security": {"allow_insecure_localhost", "trust_env"},
+    "simulation": {
+        "host",
+        "port",
+        "allow_lan",
+        "secure_cookies",
+        "max_sessions",
+        "ttl_minutes",
+        "idle_minutes",
+        "max_turns",
+        "max_input_chars",
+        "max_output_tokens",
+        "requests_per_minute",
+        "allowed_hosts",
+        "blocked_terms",
+        "log_metadata",
+    },
 }
 
 DEFAULTS: dict[str, Any] = {
@@ -57,6 +73,20 @@ DEFAULTS: dict[str, Any] = {
     "mock.context_window": 32768,
     "security.allow_insecure_localhost": False,
     "security.trust_env": False,
+    "simulation.host": "127.0.0.1",
+    "simulation.port": 8765,
+    "simulation.allow_lan": False,
+    "simulation.secure_cookies": False,
+    "simulation.max_sessions": 8,
+    "simulation.ttl_minutes": 30,
+    "simulation.idle_minutes": 10,
+    "simulation.max_turns": 30,
+    "simulation.max_input_chars": 2000,
+    "simulation.max_output_tokens": 1024,
+    "simulation.requests_per_minute": 6,
+    "simulation.allowed_hosts": ["127.0.0.1", "localhost", "::1"],
+    "simulation.blocked_terms": [],
+    "simulation.log_metadata": False,
 }
 
 BOOL_PATHS = {
@@ -64,6 +94,9 @@ BOOL_PATHS = {
     "model.disable_thinking",
     "security.allow_insecure_localhost",
     "security.trust_env",
+    "simulation.allow_lan",
+    "simulation.secure_cookies",
+    "simulation.log_metadata",
 }
 INT_PATHS = {
     "model.context_window",
@@ -75,8 +108,17 @@ INT_PATHS = {
     "budget.max_context_splits",
     "budget.max_requests_per_run",
     "mock.context_window",
+    "simulation.port",
+    "simulation.max_sessions",
+    "simulation.ttl_minutes",
+    "simulation.idle_minutes",
+    "simulation.max_turns",
+    "simulation.max_input_chars",
+    "simulation.max_output_tokens",
+    "simulation.requests_per_minute",
 }
 FLOAT_PATHS = {"model.temperature", "retry.connect_timeout", "retry.read_timeout"}
+LIST_PATHS = {"simulation.allowed_hosts", "simulation.blocked_terms"}
 
 ENV_PATHS: dict[str, str] = {
     "PSIM_MODE": "model.mode",
@@ -100,6 +142,20 @@ ENV_PATHS: dict[str, str] = {
     "PSIM_MOCK_CONTEXT_WINDOW": "mock.context_window",
     "PSIM_ALLOW_INSECURE_LOCALHOST": "security.allow_insecure_localhost",
     "PSIM_TRUST_ENV": "security.trust_env",
+    "PSIM_SIM_HOST": "simulation.host",
+    "PSIM_SIM_PORT": "simulation.port",
+    "PSIM_SIM_ALLOW_LAN": "simulation.allow_lan",
+    "PSIM_SIM_SECURE_COOKIES": "simulation.secure_cookies",
+    "PSIM_SIM_MAX_SESSIONS": "simulation.max_sessions",
+    "PSIM_SIM_TTL_MINUTES": "simulation.ttl_minutes",
+    "PSIM_SIM_IDLE_MINUTES": "simulation.idle_minutes",
+    "PSIM_SIM_MAX_TURNS": "simulation.max_turns",
+    "PSIM_SIM_MAX_INPUT_CHARS": "simulation.max_input_chars",
+    "PSIM_SIM_MAX_OUTPUT_TOKENS": "simulation.max_output_tokens",
+    "PSIM_SIM_REQUESTS_PER_MINUTE": "simulation.requests_per_minute",
+    "PSIM_SIM_ALLOWED_HOSTS": "simulation.allowed_hosts",
+    "PSIM_SIM_BLOCKED_TERMS": "simulation.blocked_terms",
+    "PSIM_SIM_LOG_METADATA": "simulation.log_metadata",
 }
 
 CLI_PATHS: dict[str, str] = {
@@ -165,6 +221,25 @@ class SecuritySettings(StrictModel):
     trust_env: bool = False
 
 
+class SimulationSettings(StrictModel):
+    host: str = Field(default="127.0.0.1", min_length=1)
+    port: int = Field(default=8765, ge=1, le=65535)
+    allow_lan: bool = False
+    secure_cookies: bool = False
+    max_sessions: int = Field(default=8, ge=1, le=64)
+    ttl_minutes: int = Field(default=30, ge=1)
+    idle_minutes: int = Field(default=10, ge=1)
+    max_turns: int = Field(default=30, ge=1)
+    max_input_chars: int = Field(default=2000, ge=1)
+    max_output_tokens: int = Field(default=1024, ge=1)
+    requests_per_minute: int = Field(default=6, ge=1)
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "::1"]
+    )
+    blocked_terms: list[str] = Field(default_factory=list)
+    log_metadata: bool = False
+
+
 class Settings(StrictModel):
     model: ModelSettings
     chunking: ChunkSettings
@@ -172,6 +247,7 @@ class Settings(StrictModel):
     budget: BudgetSettings
     mock: MockSettings
     security: SecuritySettings
+    simulation: SimulationSettings = Field(default_factory=SimulationSettings)
     api_key: str | None = Field(default=None, repr=False)
     sources: dict[str, str] = Field(default_factory=dict)
     config_path: str | None = None
@@ -193,7 +269,11 @@ class Settings(StrictModel):
         return self.model.mode == "api" and bool(self.api_key)
 
     def config_hash(self) -> str:
-        payload = self.model_dump(exclude={"api_key", "sources", "config_path"})
+        # Simulation settings do not affect a modeling run; excluding them
+        # keeps resume fingerprints stable for pre-0.2.0 runs.
+        payload = self.model_dump(
+            exclude={"api_key", "sources", "config_path", "simulation"}
+        )
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -242,6 +322,16 @@ def _coerce(path: str, value: Any) -> Any:
             return float(value)
         except (TypeError, ValueError) as exc:
             raise ConfigError(f"{path} 需要数字", stage="config") from exc
+    if path in LIST_PATHS:
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            return [item.strip() for item in value.split(",") if item.strip()]
+        raise ConfigError(
+            f"{path} 需要字符串列表", stage="config", hint="使用 TOML 数组或逗号分隔字符串"
+        )
     return str(value)
 
 
@@ -348,6 +438,22 @@ def load_settings(
         security=SecuritySettings(
             allow_insecure_localhost=merged["security.allow_insecure_localhost"],
             trust_env=merged["security.trust_env"],
+        ),
+        simulation=SimulationSettings(
+            host=merged["simulation.host"],
+            port=merged["simulation.port"],
+            allow_lan=merged["simulation.allow_lan"],
+            secure_cookies=merged["simulation.secure_cookies"],
+            max_sessions=merged["simulation.max_sessions"],
+            ttl_minutes=merged["simulation.ttl_minutes"],
+            idle_minutes=merged["simulation.idle_minutes"],
+            max_turns=merged["simulation.max_turns"],
+            max_input_chars=merged["simulation.max_input_chars"],
+            max_output_tokens=merged["simulation.max_output_tokens"],
+            requests_per_minute=merged["simulation.requests_per_minute"],
+            allowed_hosts=list(merged["simulation.allowed_hosts"]),
+            blocked_terms=list(merged["simulation.blocked_terms"]),
+            log_metadata=merged["simulation.log_metadata"],
         ),
         api_key=(environment.get("PSIM_API_KEY") or None),
         sources=sources,

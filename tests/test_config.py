@@ -144,3 +144,58 @@ def test_mock_mode_rejects_openai_provider(tmp_path):
     )
     with pytest.raises(ConfigError):
         load_settings(config_path=config, env={})
+
+
+def test_simulation_defaults():
+    settings = load_settings(env={})
+    assert settings.simulation.host == "127.0.0.1"
+    assert settings.simulation.port == 8765
+    assert settings.simulation.allow_lan is False
+    assert settings.simulation.secure_cookies is False
+    assert settings.simulation.allowed_hosts == ["127.0.0.1", "localhost", "::1"]
+    assert settings.simulation.blocked_terms == []
+
+
+def test_simulation_toml_and_env_precedence(tmp_path):
+    config = _write(
+        tmp_path / "config.toml",
+        """
+[simulation]
+port = 9000
+blocked_terms = ["张三", "某地址"]
+allowed_hosts = ["127.0.0.1", "localhost", "example.test"]
+""",
+    )
+    settings = load_settings(
+        config_path=config,
+        env={
+            "PSIM_SIM_PORT": "9100",
+            "PSIM_SIM_BLOCKED_TERMS": "李四, 某小区",
+        },
+    )
+    assert settings.simulation.port == 9100
+    assert settings.simulation.blocked_terms == ["李四", "某小区"]
+    assert settings.simulation.allowed_hosts == [
+        "127.0.0.1",
+        "localhost",
+        "example.test",
+    ]
+
+
+def test_simulation_does_not_change_build_config_hash(tmp_path):
+    plain = load_settings(env={})
+    config = _write(
+        tmp_path / "config.toml",
+        "[simulation]\nport = 9000\nblocked_terms = [\"张三\"]\n",
+    )
+    changed = load_settings(config_path=config, env={})
+    assert plain.config_hash() == changed.config_hash()
+
+
+def test_unknown_simulation_key_rejected(tmp_path):
+    config = _write(
+        tmp_path / "config.toml",
+        "[simulation]\nunknown_setting = true\n",
+    )
+    with pytest.raises(ConfigError):
+        load_settings(config_path=config, env={})
