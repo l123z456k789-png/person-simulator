@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable
@@ -42,6 +43,7 @@ class InviteRegistry:
     clock: Callable[[], datetime] = utcnow
     _by_id: dict[str, InviteRecord] = field(default_factory=dict)
     _by_hash: dict[str, InviteRecord] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def create(
         self,
@@ -63,14 +65,32 @@ class InviteRegistry:
             expires_at=now + expires_in,
             max_sessions=max_sessions,
         )
-        self._by_id[record.id] = record
-        self._by_hash[record.token_hash] = record
+        with self._lock:
+            self._by_id[record.id] = record
+            self._by_hash[record.token_hash] = record
         return record, token
+
+    def get(self, invite_id: str) -> InviteRecord:
+        with self._lock:
+            record = self._by_id.get(invite_id)
+        if record is None:
+            raise InviteError("邀请不存在", stage="invite")
+        return record
+
+    def is_active(self, invite_id: str) -> bool:
+        with self._lock:
+            record = self._by_id.get(invite_id)
+        return bool(
+            record
+            and not record.revoked
+            and record.expires_at > self.clock()
+        )
 
     def validate(self, token: str) -> InviteRecord:
         if not token:
             raise InviteError("缺少访问令牌", stage="invite")
-        record = self._by_hash.get(_hash_token(token))
+        with self._lock:
+            record = self._by_hash.get(_hash_token(token))
         if record is None:
             raise InviteError("邀请无效", stage="invite")
         if record.revoked:
@@ -80,13 +100,18 @@ class InviteRegistry:
         return record
 
     def revoke(self, invite_id: str) -> None:
-        record = self._by_id.get(invite_id)
-        if record is None:
-            raise InviteError("邀请不存在", stage="invite")
-        record.revoked = True
+        with self._lock:
+            record = self._by_id.get(invite_id)
+            if record is None:
+                raise InviteError("邀请不存在", stage="invite")
+            record.revoked = True
 
     def list_metadata(self) -> list[dict[str, object]]:
-        return [
-            record.metadata()
-            for record in sorted(self._by_id.values(), key=lambda item: item.created_at)
-        ]
+        with self._lock:
+            records = sorted(self._by_id.values(), key=lambda item: item.created_at)
+        return [record.metadata() for record in records]
+
+    def clear(self) -> None:
+        with self._lock:
+            self._by_id.clear()
+            self._by_hash.clear()

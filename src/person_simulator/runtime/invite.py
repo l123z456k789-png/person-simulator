@@ -62,6 +62,14 @@ class InvitePayload(StrictModel):
             raise InviteError("邀请 endpoint 不得包含查询参数或 fragment", stage="invite")
         if not split.hostname:
             raise InviteError("邀请 endpoint 缺少主机名", stage="invite")
+        if split.scheme == "http" and split.hostname.lower() not in {
+            "127.0.0.1",
+            "localhost",
+            "::1",
+        }:
+            raise InviteError(
+                "非 loopback 邀请必须使用 https", stage="invite"
+            )
 
 
 def _derive_key(passphrase: str, salt: bytes, iterations: int) -> bytes:
@@ -152,7 +160,9 @@ def read_invite(path: str | Path, passphrase: str) -> InvitePayload:
         blob = target.read_bytes()
     except OSError as exc:
         raise InviteError("无法读取邀请文件", stage="invite", hint=str(target)) from exc
-    return decrypt_invite(blob, passphrase)
+    payload = decrypt_invite(blob, passphrase)
+    payload.ensure_valid()
+    return payload
 
 
 def generate_passphrase() -> str:

@@ -145,6 +145,19 @@ def test_end_and_expiry_clear_message_content():
     assert expiring.messages == []
 
 
+def test_delete_marks_deleted_and_clears_content():
+    manager = make_manager()
+    session = manager.create("invite-a")
+    manager.record_exchange(session, "secret user text", "secret reply")
+
+    manager.delete(session.id)
+
+    assert session.state.value == "deleted"
+    assert session.messages == []
+    with pytest.raises(SessionNotFoundError):
+        manager.get(session.id)
+
+
 def test_list_metadata_has_no_message_content():
     manager = make_manager()
     session = manager.create("invite-a")

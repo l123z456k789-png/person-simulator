@@ -13,11 +13,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from person_simulator import __version__
 from person_simulator.chunking import build_chunk_plan
-from person_simulator.config import load_settings
+from person_simulator.config import SimulationSettings, load_settings
 from person_simulator.errors import (
     ConfigError,
+    ContextLimitError,
     PersonSimError,
     PipelineError,
     RunModeError,
@@ -38,6 +41,7 @@ from person_simulator.runtime.invite import (
 )
 from person_simulator.runtime.models import Audience
 from person_simulator.runtime.persona import load_runtime_persona
+from person_simulator.runtime.service import build_model_messages
 from person_simulator.server import InviteRegistry, create_server
 from person_simulator.storage import RunStore
 from person_simulator.wholechat.pipeline import (
@@ -421,6 +425,7 @@ def _apply_simulation_args(settings, args: argparse.Namespace) -> None:
         "max_turns",
         "max_input_chars",
         "requests_per_minute",
+        "max_concurrency",
     ):
         value = getattr(args, attr, None)
         if value is not None:
@@ -434,7 +439,16 @@ def _apply_simulation_args(settings, args: argparse.Namespace) -> None:
             *args.allowed_host,
         ]
     if updates:
-        settings.simulation = settings.simulation.model_copy(update=updates)
+        try:
+            settings.simulation = SimulationSettings.model_validate(
+                {**settings.simulation.model_dump(), **updates}
+            )
+        except ValidationError as exc:
+            raise ConfigError(
+                "simulation 配置无效",
+                stage="serve",
+                hint=str(exc),
+            ) from exc
 
 
 def _check_public_bind(settings) -> None:
@@ -465,6 +479,24 @@ def cmd_serve(args: argparse.Namespace) -> int:
             "api 模式需要 PSIM_API_KEY；不会自动降级为 mock",
             stage="serve",
         )
+    output_limit = min(
+        settings.simulation.max_output_tokens,
+        settings.model.max_output_tokens,
+    )
+    try:
+        build_model_messages(
+            loaded.persona.system_prompt,
+            [],
+            "",
+            context_window=settings.effective_context_window,
+            output_limit=output_limit,
+        )
+    except ContextLimitError as exc:
+        raise ConfigError(
+            "运行时上下文预算不足",
+            stage="serve",
+            hint=str(exc),
+        ) from exc
     if args.check:
         print("status ready")
         print(f"runtime_schema {loaded.persona.schema_version}")
@@ -487,9 +519,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
         admin_token=admin_token,
         replay_messages=loaded.replay_messages,
     )
+    if not settings.simulation.blocked_terms:
+        print(
+            "warning blocked_terms 为空：姓名/地址等非正则身份信息不会被自动隐藏",
+            file=sys.stderr,
+        )
     print("status ready")
     print(f"run_id {loaded.persona.run_id}")
     print(f"public_url {server.public_url}")
+    for lan_url in server.lan_urls:
+        print(f"lan_url {lan_url}")
     print(f"admin_url {server.admin_url}")
     print(f"admin_token_source {source}")
     if source == "generated":
@@ -533,8 +572,24 @@ def cmd_invite_create(args: argparse.Namespace) -> int:
     write_invite(out, payload, passphrase)
     endpoint = args.endpoint.rstrip("/")
     print(f"invite {out}")
+    print(f"invite_id {created['invite_id']}")
     print(f"web_url {endpoint}/?token={payload.token}")
     print(f"expires_at {payload.expires_at.isoformat()}")
+    return 0
+
+
+def cmd_invite_list(args: argparse.Namespace) -> int:
+    token, _ = _admin_token(args)
+    admin = AdminClient(args.server, token)
+    try:
+        rows = admin.list_invites()
+    finally:
+        admin.close()
+    for row in rows:
+        print(
+            f"{row.get('id')} revoked={row.get('revoked')} "
+            f"expires={row.get('expires_at')} label={row.get('label')}"
+        )
     return 0
 
 
@@ -711,6 +766,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--max-input-chars", type=int)
     serve.add_argument("--sim-max-output-tokens", type=int)
     serve.add_argument("--requests-per-minute", type=int)
+    serve.add_argument("--max-concurrency", type=int)
     serve.add_argument("--admin-token-file")
     serve.set_defaults(func=cmd_serve)
 
@@ -730,6 +786,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     invite_create.add_argument("--admin-token-file")
     invite_create.set_defaults(func=cmd_invite_create)
+
+    invite_list = invite_sub.add_parser("list", help="列出邀请元数据")
+    invite_list.add_argument("--server", required=True)
+    invite_list.add_argument("--admin-token-file")
+    invite_list.set_defaults(func=cmd_invite_list)
 
     invite_revoke = invite_sub.add_parser("revoke", help="撤销邀请")
     invite_revoke.add_argument("--server", required=True)

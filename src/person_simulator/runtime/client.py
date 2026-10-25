@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
 from person_simulator.errors import ClientError
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def _raise_for_response(response: httpx.Response) -> dict[str, Any] | list[Any]:
@@ -37,7 +40,7 @@ class _BaseClient:
         *,
         headers: dict[str, str] | None = None,
         transport: httpx.BaseTransport | None = None,
-        timeout: float = 30.0,
+        timeout: float = 180.0,
     ) -> None:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/") + "/",
@@ -69,6 +72,13 @@ class AdminClient(_BaseClient):
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        hostname = (urlsplit(server_url).hostname or "").lower()
+        if hostname not in _LOOPBACK_HOSTS:
+            raise ClientError(
+                "管理员接口必须是 loopback 地址",
+                stage="client",
+                hint="不要通过隧道或公网访问管理员接口",
+            )
         super().__init__(
             server_url,
             headers={"X-PSIM-Admin": admin_token},
@@ -94,6 +104,12 @@ class AdminClient(_BaseClient):
         if not isinstance(result, dict):
             raise ClientError("管理员响应格式错误", stage="client")
         return result
+
+    def list_invites(self) -> list[dict[str, Any]]:
+        result = self._request("GET", "/admin/invites")
+        if not isinstance(result, list):
+            raise ClientError("管理员响应格式错误", stage="client")
+        return [item for item in result if isinstance(item, dict)]
 
     def list_sessions(self) -> list[dict[str, Any]]:
         result = self._request("GET", "/admin/sessions")

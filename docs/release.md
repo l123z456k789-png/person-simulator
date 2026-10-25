@@ -74,7 +74,7 @@ Release 说明至少包含：版本、变更、安装、快速开始、隐私/�
 
 环境：Windows，Python 3.12.10，Git 2.55.0.windows.3。
 
-- 完整测试：`157 passed`。
+- 完整测试：`172 passed`。
 - 构建：`python -m build` 成功生成 `person_simulator-0.2.0-py3-none-any.whl` 与 `person_simulator-0.2.0.tar.gz`。
 - 产物检查：wheel/sdist 均包含 `person_simulator/server/static/index.html`；未发现 `data/`、`runs/`、`exports/`、`eval_runs/`、`config.toml`、`.env`、`.psim`。
 - 干净 venv 安装 wheel：成功。

@@ -14,7 +14,7 @@ from person_simulator.pipeline import build_run
 from person_simulator.providers.mock import MockClient
 from person_simulator.runtime.persona import load_runtime_persona
 from person_simulator.server import InviteRegistry, create_server
-from person_simulator.wholechat.pipeline import simulate_run
+from person_simulator.wholechat.pipeline import build_whole, simulate_run
 
 CHAT = """A: 早，今天出门吗？
 B: 看情况。
@@ -36,7 +36,19 @@ def make_run(tmp_path: Path) -> Path:
     ).run_dir
 
 
-def start_server(run: Path):
+def make_whole_run(tmp_path: Path) -> Path:
+    chat = tmp_path / "whole-chat.txt"
+    chat.write_text(CHAT, encoding="utf-8")
+    return build_whole(
+        chat,
+        target="A",
+        settings=load_settings(env={}),
+        out_root=tmp_path / "whole-runs",
+        client=MockClient(),
+    ).run_dir
+
+
+def start_server(run: Path, client=None):
     loaded = load_runtime_persona(run)
     settings = load_settings(env={})
     settings.simulation.allowed_hosts = ["127.0.0.1", "localhost", "::1"]
@@ -47,7 +59,7 @@ def start_server(run: Path):
         port=0,
         registry=InviteRegistry(),
         admin_token="admin-token",
-        client=MockClient(),
+        client=client or MockClient(),
         replay_messages=loaded.replay_messages,
     )
     server.start()
@@ -73,6 +85,25 @@ def test_build_mock_then_serve_chat_then_end(tmp_path):
         assert client.post("/api/chat", json={"message": "again"}).status_code == 410
         assert client.get("/persona.json").status_code == 404
         assert client.get("/system_prompt.md").status_code == 404
+    finally:
+        server.shutdown()
+
+
+def test_whole_run_can_be_served(tmp_path):
+    run = make_whole_run(tmp_path)
+    server = start_server(run)
+    try:
+        token = server.registry.create(
+            "whole", timedelta(minutes=5), 1
+        )[1]
+        client = httpx.Client(
+            base_url=server.public_url, follow_redirects=False, trust_env=False
+        )
+        assert client.get("/", params={"token": token}).status_code == 303
+        response = client.post("/api/chat", json={"message": "在吗"})
+        assert response.status_code == 200
+        assert "MOCK" in response.json()["reply"]
+        assert client.get("/persona.json").status_code == 404
     finally:
         server.shutdown()
 

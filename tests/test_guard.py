@@ -22,6 +22,19 @@ def test_direct_identifiers_and_blocked_terms_are_redacted():
     assert not result.blocked
 
 
+def test_formatted_and_fullwidth_identifiers_are_redacted():
+    guard = OutputGuard("system prompt baseline")
+    result = guard.check(
+        "电话 138-0013-8000，全角 １３８００１３８０００，"
+        "身份证 1101 0119 9001 0112 34。"
+    )
+
+    assert "138-0013-8000" not in result.text
+    assert "１３８００１３８０００" not in result.text
+    assert "1101 0119 9001 0112 34" not in result.text
+    assert result.redactions >= 3
+
+
 def test_normal_text_is_not_redacted_or_blocked():
     guard = OutputGuard("system prompt baseline")
     result = guard.check("今天下雨，记得带伞。")

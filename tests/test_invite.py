@@ -80,6 +80,15 @@ def test_invalid_endpoint_rejected():
             make_invite(endpoint=endpoint).ensure_valid()
 
 
+def test_public_http_endpoint_rejected():
+    with pytest.raises(InviteError):
+        make_invite(endpoint="http://example.test").ensure_valid()
+
+
+def test_loopback_http_endpoint_allowed():
+    make_invite(endpoint="http://127.0.0.1:8765").ensure_valid()
+
+
 def test_empty_passphrase_rejected():
     with pytest.raises(InviteError):
         encrypt_invite(make_invite(), "")

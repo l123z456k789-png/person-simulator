@@ -211,6 +211,15 @@ def _load_whole(
             stage="runtime",
             hint=f"status={data.get('status')!r}",
         )
+    recorded_version = data.get("package_version")
+    if recorded_version is not None and not _supported_package_version(
+        str(recorded_version)
+    ):
+        raise RunVersionError(
+            "不支持的 whole run package_version",
+            stage="runtime",
+            hint=f"package_version={recorded_version}",
+        )
     for key in ("source_hash", "target", "interlocutor"):
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise RunIncompleteError(

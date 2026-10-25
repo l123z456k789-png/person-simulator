@@ -166,6 +166,9 @@ def test_admin_creates_and_revokes_invite(server):
     payload = created.json()
     assert payload["token"]
     assert payload["invite_id"]
+    listed = admin.get("/admin/invites", headers=headers)
+    assert listed.status_code == 200
+    assert any(item["id"] == payload["invite_id"] for item in listed.json())
 
     client = exchange(server, payload["token"])
     assert client.post("/api/chat", json={"message": "hello"}).status_code == 200
@@ -179,6 +182,38 @@ def test_admin_creates_and_revokes_invite(server):
         base_url=server.public_url, follow_redirects=False, trust_env=False
     )
     assert blocked.get("/", params={"token": payload["token"]}).status_code == 401
+
+
+def test_revoke_invalidates_existing_browser_session(server):
+    record, token = server.registry.create("friend", timedelta(minutes=5), 1)
+    client = exchange(server, token)
+
+    server.registry.revoke(record.id)
+    response = client.post("/api/chat", json={"message": "still here?"})
+
+    assert response.status_code == 401
+
+
+def test_origin_with_other_local_port_rejected(server):
+    token = server.registry.create("friend", timedelta(minutes=5), 1)[1]
+    client = exchange(server, token)
+
+    response = client.post(
+        "/api/session/end",
+        headers={"Origin": "http://127.0.0.1:9999"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_admin_rejects_invalid_invite_parameters(server):
+    admin = httpx.Client(base_url=server.admin_url, trust_env=False)
+    response = admin.post(
+        "/admin/invites",
+        headers={"X-PSIM-Admin": server.admin_token},
+        json={"label": "bad", "expires_in_seconds": 0, "max_sessions": 1},
+    )
+    assert response.status_code == 400
 
 
 def test_host_header_rejected(server):
@@ -210,6 +245,7 @@ def test_oversized_body_rejected(server):
     )
 
     assert response.status_code == 413
+    assert response.headers.get("connection", "").lower() == "close"
 
 
 def test_end_session_then_chat_is_gone(server):

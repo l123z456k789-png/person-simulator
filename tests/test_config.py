@@ -152,6 +152,7 @@ def test_simulation_defaults():
     assert settings.simulation.port == 8765
     assert settings.simulation.allow_lan is False
     assert settings.simulation.secure_cookies is False
+    assert settings.simulation.max_concurrency == 2
     assert settings.simulation.allowed_hosts == ["127.0.0.1", "localhost", "::1"]
     assert settings.simulation.blocked_terms == []
 

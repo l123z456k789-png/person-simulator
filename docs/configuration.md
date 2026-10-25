@@ -82,6 +82,7 @@ Copy-Item config.example.toml config.toml
 | `max_input_chars` | 2000 | 单条输入上限 |
 | `max_output_tokens` | 1024 | 模拟回复上限 |
 | `requests_per_minute` | 6 | 每会话请求速率 |
+| `max_concurrency` | 2 | 全局模型并发上限 |
 | `allowed_hosts` | `127.0.0.1`, `localhost`, `::1` | Host 白名单 |
 | `blocked_terms` | `[]` | 输出中要隐藏的姓名/地址等词表 |
 | `log_metadata` | false | 是否输出请求元数据（仍不记录正文） |

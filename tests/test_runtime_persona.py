@@ -114,6 +114,7 @@ def make_whole_run(
     *,
     status: str = "complete",
     with_messages: bool = False,
+    package_version: str | None = None,
 ) -> Path:
     run = tmp_path / "whole-run-test"
     run.mkdir(parents=True, exist_ok=True)
@@ -131,6 +132,8 @@ def make_whole_run(
         "created_at": utcnow().isoformat(),
         "updated_at": utcnow().isoformat(),
     }
+    if package_version is not None:
+        manifest["package_version"] = package_version
     (run / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
     )
@@ -217,6 +220,12 @@ def test_guest_and_original_prompts_differ(tmp_path):
     assert guest != original
     assert "访客" in guest
     assert "原对话对象" in original
+
+
+def test_rejects_unknown_whole_package_version(tmp_path):
+    run = make_whole_run(tmp_path, package_version="9.9.9")
+    with pytest.raises(RunVersionError):
+        load_runtime_persona(run)
 
 
 def test_rejects_unknown_schema_version(tmp_path):

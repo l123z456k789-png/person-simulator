@@ -51,7 +51,7 @@ class Session:
     messages: list[ChatMessage] = field(default_factory=list)
     ended_at: datetime | None = None
     request_times: deque[datetime] = field(default_factory=deque)
-    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
 
 class SessionManager:
@@ -94,19 +94,20 @@ class SessionManager:
             return self._count_active_unlocked(invite_id)
 
     def _refresh_unlocked(self, session: Session, now: datetime) -> None:
-        if session.state != SessionState.ACTIVE:
-            return
-        if now - session.created_at >= self.ttl:
-            session.state = SessionState.EXPIRED
-            session.ended_at = now
-            session.messages.clear()
-            session.request_times.clear()
-            return
-        if now - session.last_active >= self.idle:
-            session.state = SessionState.EXPIRED
-            session.ended_at = now
-            session.messages.clear()
-            session.request_times.clear()
+        with session.lock:
+            if session.state != SessionState.ACTIVE:
+                return
+            if now - session.created_at >= self.ttl:
+                session.state = SessionState.EXPIRED
+                session.ended_at = now
+                session.messages.clear()
+                session.request_times.clear()
+                return
+            if now - session.last_active >= self.idle:
+                session.state = SessionState.EXPIRED
+                session.ended_at = now
+                session.messages.clear()
+                session.request_times.clear()
 
     def sweep(self, now: datetime | None = None) -> None:
         current = now or self._now()
@@ -176,19 +177,35 @@ class SessionManager:
                 raise SessionNotFoundError(
                     "会话不存在或已删除", stage="simulation"
                 )
-            if session.state == SessionState.ACTIVE:
-                session.state = SessionState.ENDED
-                session.ended_at = current
+            with session.lock:
+                if session.state == SessionState.ACTIVE:
+                    session.state = SessionState.ENDED
+                    session.ended_at = current
+                    session.messages.clear()
+                    session.request_times.clear()
+
+    def clear(self) -> None:
+        with self._lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
+            with session.lock:
+                session.state = SessionState.DELETED
                 session.messages.clear()
                 session.request_times.clear()
 
     def delete(self, session_id: str) -> None:
         with self._lock:
-            if session_id not in self._sessions:
+            session = self._sessions.pop(session_id, None)
+            if session is None:
                 raise SessionNotFoundError(
                     "会话不存在或已删除", stage="simulation"
                 )
-            del self._sessions[session_id]
+            with session.lock:
+                session.state = SessionState.DELETED
+                session.ended_at = self._now()
+                session.messages.clear()
+                session.request_times.clear()
 
     def list_metadata(self) -> list[dict[str, object]]:
         self.sweep()

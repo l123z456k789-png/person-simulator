@@ -45,6 +45,7 @@ SECTION_KEYS: dict[str, set[str]] = {
         "max_input_chars",
         "max_output_tokens",
         "requests_per_minute",
+        "max_concurrency",
         "allowed_hosts",
         "blocked_terms",
         "log_metadata",
@@ -84,6 +85,7 @@ DEFAULTS: dict[str, Any] = {
     "simulation.max_input_chars": 2000,
     "simulation.max_output_tokens": 1024,
     "simulation.requests_per_minute": 6,
+    "simulation.max_concurrency": 2,
     "simulation.allowed_hosts": ["127.0.0.1", "localhost", "::1"],
     "simulation.blocked_terms": [],
     "simulation.log_metadata": False,
@@ -116,6 +118,7 @@ INT_PATHS = {
     "simulation.max_input_chars",
     "simulation.max_output_tokens",
     "simulation.requests_per_minute",
+    "simulation.max_concurrency",
 }
 FLOAT_PATHS = {"model.temperature", "retry.connect_timeout", "retry.read_timeout"}
 LIST_PATHS = {"simulation.allowed_hosts", "simulation.blocked_terms"}
@@ -153,6 +156,7 @@ ENV_PATHS: dict[str, str] = {
     "PSIM_SIM_MAX_INPUT_CHARS": "simulation.max_input_chars",
     "PSIM_SIM_MAX_OUTPUT_TOKENS": "simulation.max_output_tokens",
     "PSIM_SIM_REQUESTS_PER_MINUTE": "simulation.requests_per_minute",
+    "PSIM_SIM_MAX_CONCURRENCY": "simulation.max_concurrency",
     "PSIM_SIM_ALLOWED_HOSTS": "simulation.allowed_hosts",
     "PSIM_SIM_BLOCKED_TERMS": "simulation.blocked_terms",
     "PSIM_SIM_LOG_METADATA": "simulation.log_metadata",
@@ -233,6 +237,7 @@ class SimulationSettings(StrictModel):
     max_input_chars: int = Field(default=2000, ge=1)
     max_output_tokens: int = Field(default=1024, ge=1)
     requests_per_minute: int = Field(default=6, ge=1)
+    max_concurrency: int = Field(default=2, ge=1, le=16)
     allowed_hosts: list[str] = Field(
         default_factory=lambda: ["127.0.0.1", "localhost", "::1"]
     )
@@ -451,6 +456,7 @@ def load_settings(
             max_input_chars=merged["simulation.max_input_chars"],
             max_output_tokens=merged["simulation.max_output_tokens"],
             requests_per_minute=merged["simulation.requests_per_minute"],
+            max_concurrency=merged["simulation.max_concurrency"],
             allowed_hosts=list(merged["simulation.allowed_hosts"]),
             blocked_terms=list(merged["simulation.blocked_terms"]),
             log_metadata=merged["simulation.log_metadata"],

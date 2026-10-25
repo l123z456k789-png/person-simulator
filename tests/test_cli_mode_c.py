@@ -67,6 +67,49 @@ def test_serve_check_validates_run(tmp_path, capsys):
     assert "status ready" in output
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--max-turns", "0"],
+        ["--max-sessions", "0"],
+        ["--max-input-chars", "-1"],
+        ["--port", "99999"],
+    ],
+)
+def test_serve_check_rejects_invalid_simulation_values(tmp_path, capsys, extra):
+    run = make_run(tmp_path)
+
+    code = main(
+        ["serve", "--run", str(run), "--mode", "mock", "--check", *extra]
+    )
+
+    assert code == 2
+    assert "simulation" in capsys.readouterr().err.lower()
+
+
+def test_serve_check_rejects_oversized_runtime_prompt(tmp_path, capsys):
+    run = make_run(tmp_path)
+    (run / "system_prompt.md").write_text("x" * 10_000, encoding="utf-8")
+    config = tmp_path / "config.toml"
+    config.write_text("[mock]\ncontext_window = 1000\n", encoding="utf-8")
+
+    code = main(
+        [
+            "serve",
+            "--run",
+            str(run),
+            "--mode",
+            "mock",
+            "--config",
+            str(config),
+            "--check",
+        ]
+    )
+
+    assert code == 2
+    assert "上下文预算" in capsys.readouterr().err
+
+
 def test_serve_check_rejects_public_bind_without_allow_lan(tmp_path, capsys):
     run = make_run(tmp_path)
 
@@ -85,6 +128,14 @@ def test_serve_check_rejects_public_bind_without_allow_lan(tmp_path, capsys):
 
     assert code == 2
     assert "--allow-lan" in capsys.readouterr().err
+
+
+def test_admin_client_rejects_non_loopback():
+    from person_simulator.errors import ClientError
+    from person_simulator.runtime.client import AdminClient
+
+    with pytest.raises(ClientError):
+        AdminClient("https://example.test", "admin-token")
 
 
 def test_invite_create_and_connect(server, tmp_path, monkeypatch, capsys):
@@ -114,9 +165,12 @@ def test_invite_create_and_connect(server, tmp_path, monkeypatch, capsys):
     assert code == 0
     created_output = capsys.readouterr().out
     assert "web_url" in created_output
+    assert "invite_id" in created_output
     payload = read_invite(out, "test-passphrase")
     assert payload.token
     assert payload.endpoint == server.public_url
+    assert main(["invite", "list", "--server", server.admin_url]) == 0
+    assert "revoked=False" in capsys.readouterr().out
 
     code = main(
         [

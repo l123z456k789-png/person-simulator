@@ -92,6 +92,7 @@ def test_prompt_leak_is_blocked_and_not_stored():
 
         assert response.status_code == 422
         assert response.json()["error_code"] == "E_OUTPUT_BLOCKED"
+        assert "hint" not in response.json()
         assert prompt[:60] not in response.text
         assert client.get("/api/session").json()["turns"] == 0
     finally:

@@ -114,11 +114,17 @@ $env:PSIM_ADMIN_TOKEN = "<管理员令牌>"
 $env:PSIM_INVITE_PASSPHRASE = "<邀请口令>"
 
 person-sim invite create `
-  --server http://127.0.0.1:8765 `
-  --endpoint http://127.0.0.1:8765 `
+  --server <serve 打印的 admin_url> `
+  --endpoint <serve 打印的 public_url 或隧道地址> `
   --out invite.psim `
   --label "给同学" `
   --expires-in 3600
+```
+
+`invite create` 会打印 `invite_id`、`web_url` 和过期时间；撤销时使用 `invite_id`。也可以先列出：
+
+```powershell
+person-sim invite list --server <admin_url>
 ```
 
 `invite.psim` 是加密邀请文件，**只包含**服务地址、令牌、有效期、备注和限额；**不包含人物档案、system prompt、原始聊天或 API Key**。
@@ -141,13 +147,13 @@ person-sim connect --invite invite.psim --message "在吗？"
 
 ```powershell
 # 列出会话元数据
-person-sim session list --server http://127.0.0.1:8765
+person-sim session list --server <admin_url>
 
 # 删除单个会话
-person-sim session delete --server http://127.0.0.1:8765 <session-id>
+person-sim session delete --server <admin_url> <session-id>
 
 # 撤销邀请
-person-sim invite revoke --server http://127.0.0.1:8765 --invite-id <invite-id>
+person-sim invite revoke --server <admin_url> --invite-id <invite-id>
 ```
 
 管理员接口在独立的 loopback 端口，公开端口没有 `/admin/*`。停止服务会清空所有内存会话和邀请。
@@ -222,7 +228,7 @@ log_metadata = false
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-当前基线：**157 passed**（Windows，Python 3.12.10；新增模式 C 测试后）。测试不依赖真实聊天、真实 API Key 或个人绝对路径；CI 不调用真实模型 API。
+当前基线：**172 passed**（Windows，Python 3.12.10；新增模式 C 测试后）。测试不依赖真实聊天、真实 API Key 或个人绝对路径；CI 不调用真实模型 API。
 
 工程测试通过只证明代码按契约工作，不证明人物相似度。人物质量仍需真实留出集与独立人工评分；当前为 **not_evaluated**。
 

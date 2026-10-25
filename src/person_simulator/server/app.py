@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import socket
 import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from person_simulator.errors import (
     AccessDeniedError,
     ConfigError,
     ForbiddenError,
+    InputError,
     InputTooLongError,
     InviteError,
     OutputBlockedError,
@@ -36,7 +38,20 @@ _STATIC_DIR = Path(__file__).with_name("static")
 _STATIC_FILES = {"app.js", "style.css"}
 _COOKIE_NAME = "psim_session"
 _MAX_BODY_BYTES = 64 * 1024
+_MAX_DRAIN_BYTES = 1024 * 1024
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def detected_local_hosts() -> frozenset[str]:
+    hosts: set[str] = set()
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None):
+            host = info[4][0]
+            if host:
+                hosts.add(host.lower())
+    except OSError:
+        pass
+    return frozenset(hosts)
 
 
 @dataclass
@@ -136,6 +151,8 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         for key, value in headers:
             self.send_header(key, value)
         self.end_headers()
@@ -154,13 +171,21 @@ class _BaseHandler(BaseHTTPRequestHandler):
         )
 
     def _error(self, exc: PersonSimError) -> None:
+        status = _status_for(exc)
+        if status in (400, 413):
+            # The body may be unread; do not reuse this keep-alive connection.
+            self.close_connection = True
         payload: dict[str, object] = {
             "error_code": exc.error_code,
             "message": _public_message(exc),
         }
-        if exc.hint and _status_for(exc) < 500:
+        if (
+            exc.hint
+            and exc.error_code != "E_OUTPUT_BLOCKED"
+            and status < 500
+        ):
             payload["hint"] = exc.hint
-        self._json(_status_for(exc), payload)
+        self._json(status, payload)
 
     def _host_ok(self) -> bool:
         raw = self.headers.get("Host", "")
@@ -171,8 +196,15 @@ class _BaseHandler(BaseHTTPRequestHandler):
         raw = self.headers.get("Origin")
         if not raw:
             return True
-        hostname = urlsplit(raw).hostname
-        return bool(hostname) and hostname.lower() in self.context.allowed_hosts
+        origin = urlsplit(raw)
+        if origin.scheme not in {"http", "https"} or not origin.hostname:
+            return False
+        if origin.hostname.lower() not in self.context.allowed_hosts:
+            return False
+        host = urlsplit("//" + self.headers.get("Host", ""))
+        origin_port = origin.port or (443 if origin.scheme == "https" else 80)
+        host_port = host.port or (443 if origin.scheme == "https" else 80)
+        return origin_port == host_port
 
     def _guard_request(self) -> bool:
         if not self._host_ok() or not self._origin_ok():
@@ -180,23 +212,30 @@ class _BaseHandler(BaseHTTPRequestHandler):
             return False
         return True
 
+    def _discard_body(self, length: int) -> None:
+        if length > 0:
+            self.rfile.read(min(length, _MAX_DRAIN_BYTES))
+
     def _drain_body(self) -> None:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
         if length > _MAX_BODY_BYTES:
+            self._discard_body(length)
             raise InputTooLongError("请求体过大", stage="server")
-        if length > 0:
-            self.rfile.read(length)
+        self._discard_body(length)
 
     def _read_json(self) -> dict[str, object]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise InputTooLongError("请求长度无效", stage="server") from exc
-        if length <= 0 or length > _MAX_BODY_BYTES:
-            raise InputTooLongError("请求体为空或过大", stage="server")
+        if length <= 0:
+            raise InputTooLongError("请求体为空", stage="server")
+        if length > _MAX_BODY_BYTES:
+            self._discard_body(length)
+            raise InputTooLongError("请求体过大", stage="server")
         raw = self.rfile.read(length)
         try:
             value = json.loads(raw.decode("utf-8"))
@@ -232,6 +271,8 @@ class _BaseHandler(BaseHTTPRequestHandler):
         if not session_id:
             raise AccessDeniedError("缺少会话凭证", stage="server")
         session = self.context.manager.get(session_id)
+        if not self.context.registry.is_active(session.invite_id):
+            raise AccessDeniedError("邀请已撤销或过期", stage="server")
         bearer = self._bearer()
         if bearer:
             invite = self.context.registry.validate(bearer)
@@ -269,6 +310,7 @@ class _BaseHandler(BaseHTTPRequestHandler):
         )
 
     def do_DELETE(self) -> None:  # noqa: N802
+        self._drain_body()
         self._json(404, {"error_code": "E_NOT_FOUND", "message": "not found"})
 
 
@@ -432,6 +474,10 @@ class AdminHandler(_BaseHandler):
                     )
                 except (TypeError, ValueError) as exc:
                     raise InviteError("邀请参数无效", stage="invite") from exc
+                if expires_in <= 0 or (
+                    max_sessions is not None and max_sessions < 1
+                ):
+                    raise InputError("邀请参数无效", stage="invite")
                 record, token = self.context.registry.create(
                     label, timedelta(seconds=expires_in), max_sessions
                 )
@@ -450,6 +496,7 @@ class AdminHandler(_BaseHandler):
                 self.context.shutdown_event.set()
                 self._json(202, {"status": "shutting_down"})
                 return
+            self._drain_body()
             self._json(404, {"error_code": "E_NOT_FOUND", "message": "not found"})
         except PersonSimError as exc:
             self._error(exc)
@@ -493,12 +540,25 @@ class SimulationServer:
     def public_url(self) -> str:
         host, port = self.public_server.server_address[:2]
         display = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+        if ":" in display:
+            display = f"[{display}]"
         return f"http://{display}:{port}"
 
     @property
     def admin_url(self) -> str:
         host, port = self.admin_server.server_address[:2]
         return f"http://{host}:{port}"
+
+    @property
+    def lan_urls(self) -> tuple[str, ...]:
+        host, port = self.public_server.server_address[:2]
+        if host not in {"0.0.0.0", "::"}:
+            return ()
+        return tuple(
+            f"http://{item}:{port}"
+            for item in sorted(detected_local_hosts())
+            if item not in _LOOPBACK_HOSTS
+        )
 
     @property
     def admin_token(self) -> str:
@@ -542,6 +602,8 @@ class SimulationServer:
         for thread in self._threads:
             thread.join(timeout=5)
         self.context.chat_service.close()
+        self.context.manager.clear()
+        self.context.registry.clear()
 
 
 def create_server(
@@ -563,11 +625,14 @@ def create_server(
             stage="server",
             hint="设置 simulation.allow_lan=true 或使用 127.0.0.1",
         )
-    allowed_hosts = frozenset(
+    allowed = (
         {item.lower() for item in settings.simulation.allowed_hosts}
         | _LOOPBACK_HOSTS
         | {host.lower()}
     )
+    if settings.simulation.allow_lan:
+        allowed |= detected_local_hosts()
+    allowed_hosts = frozenset(allowed)
     manager = SessionManager(
         max_sessions=settings.simulation.max_sessions,
         ttl=timedelta(minutes=settings.simulation.ttl_minutes),
