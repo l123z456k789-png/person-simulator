@@ -16,49 +16,593 @@
 
 `person-simulator` 读取一份**已经清洗好的、两人之间的 UTF-8 聊天文本**，指定其中一人作为 `target`，通过兼容 OpenAI Chat Completions 的模型 API（或完全离线的 Mock）进行分析，生成人物模拟材料。
 
-它提供两种使用方式：
-
-- **Mode A：个人档案模式**。在本地生成可阅读、可保存、可复用的人物档案和系统提示词，适合自己查看、修改，或上传到网页版 AI。
-- **Mode C：交互体验模式**。在所有者自己的电脑或服务器上启动一个受控服务，让被邀请的人通过客户端或浏览器与人物模拟对话，而不直接拿到完整人物档案。
-
-两种模式复用同一套输入解析、模型调用、预算和存储基础，但它们的产物和访问边界不同。
-
-它模拟的是“基于这些聊天记录，一个人可能怎样说话和反应”，不是那个人本身。它不保证事实正确，不保证人格准确，也不代表被模拟者真实的意愿。聊天记录里没有的东西，它应该承认不知道，而不是补一个听起来合理的答案。
-
-## 能做什么
+它有两种使用方式。
 
 ### Mode A：个人档案模式
 
-适合这样的场景：你有一份聊天记录，想为其中一个人建立一份可以反复使用的模拟材料；你不想每次手工整理提示词；你希望看到材料引用了哪些原话，而不是只拿到一段黑箱生成的角色设定。
+在本地生成可阅读、可保存、可复用的人物档案和系统提示词，适合自己查看、修改，或上传到网页版 AI。
 
 Mode A 有两条建模路径：
 
 - **`whole`**：把整段聊天一次性交给长上下文模型，生成 `system_prompt.md`，以及可选的 `person_simulation.md`。
 - **`evidence`**：把聊天按会话和预算切分，逐块提取带原文位置的人物观察，校验证据，再汇总成 `persona.json`，最后渲染成固定 13 章的 `person_simulation.md` 和独立的 `system_prompt.md`。
 
-`build` 默认使用 `--strategy auto`：如果整段聊天能放进当前上下文预算，就走 `whole`；否则走 `evidence`。也可以显式指定。对一份很短的双人聊天，`auto` 往往会选择 `whole`，而不是 `evidence`。
+`build` 默认使用 `--strategy auto`：如果整段聊天能放进当前上下文预算，就走 `whole`；否则走 `evidence`。对一份很短的双人聊天，`auto` 往往会选择 `whole`。
 
 Mode A 的产物在本地 `runs/` 下。`evidence` run 可以 `resume`、可以 `render` 到另一个目录；`whole` run 没有同样的检查点和 13 章结构，直接使用它生成的 `system_prompt.md` / `person_simulation.md` 即可。`render` 只适用于 `evidence` run。
 
-Mode A 生成的是“材料”，不是“已经验证过的本人”。`evidence` 产物会明确区分目标自述、对方声称、观察和有依据的推断；Mock 产物会显著标记为合成演示。
-
 ### Mode C：交互体验模式
 
-适合这样的场景：你想让一个经过授权的朋友体验“和这个人聊天”，但不想把完整档案、原始聊天或 API Key 直接交给对方。
+在所有者自己的电脑或服务器上启动一个受控服务，让被邀请的人通过客户端或浏览器与人物模拟对话，而不直接拿到完整人物档案。
 
-Mode C 的基本流程是：
+基本流程是：
 
 1. 所有者先完成一个 Mode A run。
 2. 用 `serve` 加载这个 run，启动公开监听器和独立的管理员监听器。
-3. 所有者创建一份加密邀请，把邀请文件或浏览器链接通过安全渠道发给体验者。
-4. 体验者用 `connect` 客户端或浏览器与模拟对话。
+3. 所有者创建加密邀请，把邀请文件或浏览器链接通过安全渠道发给体验者。
+4. 体验者用浏览器或 `connect` 客户端与模拟对话。
 5. 所有者可以列出会话、删除会话、撤销邀请；停止服务会清空内存中的会话和邀请。
 
 体验者只看到对话和“AI 模拟角色，不是本人”的提示，不会拿到 `persona.json`、`system_prompt.md`、原始聊天或完整档案下载入口。公开端口没有 `/admin/*`；管理员接口在独立的 loopback 端口。
 
 Mode C 当前提供 CLI 客户端和浏览器兜底页面。没有独立桌面程序，没有 MCP adapter，也没有内置的公网 TLS/ACME。
 
+### 它不做什么
+
+- 不解析微信原始数据库；输入必须是已经导出的文本。
+- 不训练模型，不做向量数据库，不做实时监听。
+- 不提供中央人物库、中央账号或公网多租户 SaaS。
+- 不保证模拟出来的人就是本人，也不保证事实正确。
+- 不把 Mock 产物当成真实人物建模结果。
+
+## 怎么使用
+
+先确认你是哪一种使用者：
+
+| 你的目标 | 看哪里 |
+|---|---|
+| 我想自己生成一份人物档案 | 第一部分第 1—5 节 |
+| 我想让别人体验这个人物 | 第一部分第 1—6 节 |
+| 我只是被邀请来聊一次 | 第一部分第 6.4 节，优先用浏览器 |
+| 我是 AI 编码助手，要改这个仓库 | 第二部分 |
+| 我只想先看看流程 | 第一部分第 3 节，用 Mock |
+
+> 如果你只是被邀请来聊一次，直接看 **6.4 体验者怎么用**。浏览器路径不需要安装 Python，也不需要 API Key。
+
+### 第一部分：给真人看的说明书
+
+这一部分按顺序做就能完成一次完整使用。命令以 Windows PowerShell 为主；macOS / Linux 的差异会单独标出。
+
+#### 0. 先准备什么
+
+你至少需要：
+
+- 一台自己的电脑；
+- Python **3.11+**；
+- 一份你有权处理的 UTF-8 双人聊天文本；
+- 如果想用真实模型，还需要一个兼容 OpenAI Chat Completions 的 API Key。
+
+不需要 GPU，不需要数据库，不需要公网服务器。Mode A 和 Mock 模式都可以只在本机完成。
+
+#### 1. 安装
+
+**Windows PowerShell：**
+
+```powershell
+git clone https://github.com/l123z456k789-png/person-simulator.git
+cd person-simulator
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+
+person-sim --version
+```
+
+最后应看到：
+
+```text
+person-simulator 0.2.0
+```
+
+如果 PowerShell 不允许执行 `Activate.ps1`，不用强行改系统策略，可以直接用完整路径：
+
+```powershell
+.\.venv\Scripts\person-sim.exe --version
+```
+
+后面的 `person-sim` 命令都可以替换成 `.\.venv\Scripts\person-sim.exe`。也可以始终用模块方式运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m person_simulator --version
+```
+
+**macOS / Linux：**
+
+```bash
+git clone https://github.com/l123z456k789-png/person-simulator.git
+cd person-simulator
+
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+
+person-sim --version
+```
+
+没有 Git 的话，也可以在 GitHub 页面下载 ZIP，解压后进入目录执行同样的 Python 命令。
+
+#### 2. 准备聊天文本
+
+项目不直接读取微信数据库。你需要先准备一份 UTF-8 的双人聊天文本，放在任意路径；下面用 `data/chat.txt` 举例。
+
+如果你的文件目录还不存在：
+
+```powershell
+New-Item -ItemType Directory -Force data
+```
+
+文本格式如下：
+
+```text
+[2024-05-01T09:30:00+08:00] A: 早，今天出门吗？
+B: 看情况。
+  如果不下雨就去。
+[2024-05-01T09:32:00+08:00] A：那带上伞。
+B: 好。
+```
+
+规则：
+
+- 消息头是 `A: 文本` 或 `A：文本`。
+- 冒号后最多一个 ASCII 空格属于格式分隔，其余字符都属于正文。
+- 续行以两个空格开头；只由两个空格组成的行表示正文空行。
+- 说话人标签必须前后一致。原聊天用 `小明` / `小红`，就写 `小明: ...` / `小红: ...`，不要在同一次运行里混用 `A`/`B`。
+- `--target` 必须和其中一个标签完全一致。
+
+如果你使用 **LC044/WeChatMsg 4.x 适配版**导出的固定 Markdown 格式，可以用仓库里的转换辅助：
+
+```powershell
+.\.venv\Scripts\python.exe tools\convert_wechat_md.py `
+  path\to\export.md `
+  --speaker-a 小明 `
+  --speaker-b 小红 `
+  --out data\chat.txt
+```
+
+这个转换器只识别一种已知的 Markdown 导出形状：
+
+```text
+## 2025-06-10
+**[18:51:34] 小明**
+消息正文
+```
+
+它不是通用微信解析器。其他导出格式需要你自己整理成上面的 `A:` / `B:` 文本。WeChatMsg 是独立的 GPL-3.0 项目，本项目不包含它的代码、数据库密钥或导出数据。
+
+导入前请先确认：
+
+- 你有权处理这份聊天记录；
+- 聊天里另一位参与者知道或同意你用它做这件事；
+- 文件里没有你不想让模型服务商看到的 API Key、身份证号、住址等信息。
+
+#### 3. 第一次运行：先不花钱
+
+先用官方合成样例或你自己的文本做一次离线 Mock。Mock 不联网、不产生 API 费用，只用于验证流程，不代表真实人物建模。如果暂时没有自己的聊天，把下面命令里的 `data\chat.txt` 换成 `examples\sample_chat.txt`，并使用 `--target A`（样例标签是 `A`/`B`）。
+
+```powershell
+person-sim doctor
+person-sim validate --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明
+person-sim plan --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明
+```
+
+如果说话人标签是 `A` / `B`，就改成 `--target A`。
+
+`doctor` 默认不联网；`plan` 只打印切分、预算和 coverage，不调用模型，也不打印聊天正文。
+
+然后运行第一次构建：
+
+```powershell
+person-sim build `
+  --input data\chat.txt `
+  --speaker-a 小明 `
+  --speaker-b 小红 `
+  --target 小明 `
+  --mode mock `
+  --out runs
+```
+
+终端会打印类似：
+
+```text
+status completed
+run_dir C:\...\runs\run-...
+export C:\...\runs\run-...\person_simulation.md
+...
+MOCK 合成演示，不代表真实人物建模
+```
+
+记住 `run_dir`。打开里面的：
+
+```text
+runs\<run-id>\person_simulation.md
+runs\<run-id>\system_prompt.md
+```
+
+`person_simulation.md` 是人类可读的档案；`system_prompt.md` 是可直接粘贴到网页版 AI 的系统提示词。
+
+如果你只是想看看两种建模路径的差异，可以再显式跑一次：
+
+```powershell
+# 13 章 + 证据账本
+person-sim build --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明 --mode mock --strategy evidence --out runs
+
+# 整段原文一次分析；不保证 13 章
+person-sim build --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明 --mode mock --strategy whole --out runs
+```
+
+第一次使用不建议同时跑三条；先跑 `auto`，确认流程通了再选路径。
+
+#### 4. 使用真实模型
+
+真实 API 会产生费用。项目不提供价格表，也不保证成功率；先用 Mock 验证流程，再用 `plan` 和 `--max-requests` 控制预算。
+
+复制示例配置：
+
+```powershell
+Copy-Item config.example.toml config.toml
+```
+
+编辑 `config.toml` 的 `[model]`：
+
+```toml
+[model]
+mode = "api"
+provider = "openai_chat"
+model = "YOUR_MODEL_ID"
+base_url = "https://YOUR_PROVIDER_HOST/v1"
+context_window = 32768
+max_output_tokens = 4096
+```
+
+说明：
+
+- `base_url` 是 API 根地址，不要包含 `/chat/completions`。
+- `context_window` 要填写服务商实际支持的上下文窗口，不要照抄示例。
+- 当前只支持 HTTPS + Bearer Key + 非流式 `POST /chat/completions` 的 OpenAI-compatible 服务。
+- API Key 只从环境变量读取，不写进 `config.toml`。
+
+设置 Key 并检查：
+
+```powershell
+$env:PSIM_API_KEY = "<你的 API Key>"
+person-sim doctor --config config.toml
+```
+
+`doctor` 默认只检查配置，不发送请求。确认要花一次最小请求的费用时，再做真实探测：
+
+```powershell
+person-sim doctor --config config.toml --probe-api
+```
+
+然后先用 `plan` 看预算：
+
+```powershell
+person-sim plan --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明 --config config.toml
+```
+
+正式构建：
+
+```powershell
+person-sim build `
+  --input data\chat.txt `
+  --speaker-a 小明 `
+  --speaker-b 小红 `
+  --target 小明 `
+  --mode api `
+  --config config.toml `
+  --max-requests 100 `
+  --out runs
+```
+
+`--max-requests` 是本次运行的请求上限，不是费用上限。实际费用由你的模型服务商按 token 计费；`plan` 也不包含 reduce、修复和重试的全部调用。
+
+如果中途失败：
+
+- `evidence` run 保留了检查点，可以继续：
+
+```powershell
+person-sim resume --run runs\<evidence-run-id> --config config.toml --mode api
+```
+
+- `whole` run 没有同样的分块检查点；超长聊天请改用 `--strategy evidence`，或先用 `--limit-messages` 做 pilot。
+
+#### 5. 使用生成的人物材料
+
+`evidence` run 会生成：
+
+```text
+person_simulation.md    # 固定 13 章，人类可读
+system_prompt.md        # 可直接粘贴到网页版 AI
+persona.json            # 证据审计用，不要直接上传
+evidence.jsonl          # 证据审计用
+```
+
+`whole` run 会生成：
+
+```text
+system_prompt.md
+person_simulation.md    # 可选，模型自由组织，不保证 13 章
+```
+
+使用方式：
+
+1. 打开网页版 AI 的新会话；
+2. 上传 `person_simulation.md`，或把 `system_prompt.md` 贴进系统提示词/自定义指令；
+3. 把对话对象设定为聊天中的另一位参与者，或者按材料中的使用说明开始；
+4. 不要同时把 `persona.json`、`evidence.jsonl` 和原始聊天交给网页 AI。
+
+如果平台限制文件长度，优先使用 `system_prompt.md`。它本来就是为直接粘贴准备的。
+
+再次强调：材料看起来像，不等于就是本人；它可能记错事实，也可能在新情境里编造历史。
+
+#### 6. 让别人体验：Mode C（可选）
+
+如果你只想自己生成档案，可以跳过这一节。
+
+##### 6.1 先确认 run 能加载
+
+```powershell
+person-sim serve --run runs\<run-id> --mode mock --check
+```
+
+`--check` 只校验 run、版本、模式和配置，不监听端口。准备用真实模型时，把 `--mode mock` 换成 `--mode api`，并先设置好 `PSIM_API_KEY`。
+
+##### 6.2 启动服务
+
+```powershell
+person-sim serve --run runs\<run-id> --mode mock
+```
+
+终端会打印：
+
+```text
+public_url http://127.0.0.1:8765
+admin_url http://127.0.0.1:<随机端口>
+admin_token_source ...
+```
+
+如果 `admin_token_source` 是 `generated`，终端还会打印一次 `admin_token`。把它复制下来，在另一个终端设置：
+
+```powershell
+$env:PSIM_ADMIN_TOKEN = "<刚刚打印的管理员令牌>"
+```
+
+`serve` 会占用当前终端。不要关掉它；邀请和会话管理要在另一个终端做。
+
+如果不想用自动生成的令牌，可以提前自己设置，或使用文件：
+
+```powershell
+$env:PSIM_ADMIN_TOKEN = "<你自己的令牌>"
+# 或者
+person-sim serve --run runs\<run-id> --mode mock --admin-token-file .secrets\admin.txt
+```
+
+管理员令牌不接受明文命令行参数，避免出现在进程列表里。
+
+##### 6.3 创建邀请
+
+在第二个终端：
+
+```powershell
+$env:PSIM_ADMIN_TOKEN = "<管理员令牌>"
+$env:PSIM_INVITE_PASSPHRASE = "<邀请口令>"
+
+person-sim invite create `
+  --server <serve 打印的 admin_url> `
+  --endpoint <serve 打印的 public_url> `
+  --out invite.psim `
+  --label "给同学" `
+  --expires-in 3600
+```
+
+会打印：
+
+```text
+invite_id ...
+web_url http://127.0.0.1:8765/?token=...
+expires_at ...
+```
+
+`invite.psim` 只包含服务地址、令牌、有效期、备注、可选指纹和限额；不包含人物档案、system prompt、原始聊天或 API Key。
+
+把 `web_url` 或 `invite.psim` 通过安全渠道发给体验者。邀请口令最好走另一条渠道。`web_url` 本身带有访问令牌，拿到链接的人就能建立会话，不要公开贴出。
+
+##### 6.4 体验者怎么用
+
+**最简单：浏览器。** 体验者不需要安装 Python，也不需要 API Key。打开所有者发来的 `web_url` 即可。页面会常驻显示“AI 模拟角色，不是本人”。
+
+**如果使用 CLI：** 体验者需要先安装本项目，然后：
+
+```powershell
+$env:PSIM_INVITE_PASSPHRASE = "<邀请口令>"
+person-sim connect --invite invite.psim
+```
+
+不带 `--message` 时进入交互式对话，输入 `/exit` 结束。也可以只发一条：
+
+```powershell
+person-sim connect --invite invite.psim --message "在吗？"
+```
+
+体验者不需要 `PSIM_API_KEY`，也不需要管理员令牌，更不应该拿到 `serve`、`session delete` 这些所有者命令。
+
+##### 6.5 结束、删除和撤销
+
+```powershell
+person-sim session list --server <admin_url>
+person-sim session delete --server <admin_url> <session-id>
+
+person-sim invite list --server <admin_url>
+person-sim invite revoke --server <admin_url> --invite-id <invite-id>
+```
+
+结束或过期会清空消息内容；删除会移除会话；停止服务会清空所有内存会话和邀请。run 文件和 `exports/` 不会被自动删除。
+
+##### 6.6 局域网和公网
+
+默认只监听 `127.0.0.1`。局域网需要显式开启：
+
+```powershell
+person-sim serve `
+  --run runs\<run-id> --mode mock `
+  --host 0.0.0.0 --allow-lan `
+  --allowed-host 192.168.1.20
+```
+
+但 `invite create` 的 `--endpoint` 只接受 loopback 的 `http` 或任意 `https`。纯 HTTP 的局域网地址不能直接生成邀请。要在局域网或公网给朋友用，需要 HTTPS 入口，例如反向代理、Tailscale Serve 或 Cloudflare Tunnel。
+
+隧道只转发公开端口，**不要转发管理员端口**。HTTPS 场景建议设置：
+
+```toml
+[simulation]
+secure_cookies = true
+allowed_hosts = ["127.0.0.1", "localhost", "::1", "your-tunnel-host"]
+```
+
+体验者实际访问的 HTTPS 地址才是 `--endpoint`，不是本机的 `http://127.0.0.1:8765`。
+
+#### 7. 常见问题
+
+**`person-sim` 不是内部或外部命令**
+
+先激活虚拟环境：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+或者直接用完整路径：
+
+```powershell
+.\.venv\Scripts\person-sim.exe --version
+```
+
+**提示 `target` 不匹配**
+
+用 `validate` 看实际标签：
+
+```powershell
+person-sim validate --input data\chat.txt --speaker-a 小明 --speaker-b 小红 --target 小明
+```
+
+标签必须完全一致；`小明` 和 `A` 不是同一个标签。
+
+**提示 `api 模式需要 PSIM_API_KEY`**
+
+```powershell
+$env:PSIM_API_KEY = "<你的 Key>"
+```
+
+项目不会自动降级为 Mock。没有 Key 就显式使用 `--mode mock`。
+
+**`whole` 提示上下文不够**
+
+改用 `--strategy evidence`，或先用 `--limit-messages 50` 做 pilot。`auto` 会在整段放不下时自动选 evidence。
+
+**`invite create` 拒绝局域网 HTTP 地址**
+
+这是有意的安全限制。给非 loopback 地址发邀请必须用 HTTPS。用反向代理、Tailscale Serve 或 Cloudflare Tunnel 提供 HTTPS，再把 HTTPS 地址传给 `--endpoint`。
+
+**`render` 说文件已存在**
+
+换一个空的输出目录；`render` 不会覆盖已有文件。
+
+**Mock 输出看起来像模板**
+
+Mock 本来就是确定性合成演示，不是真实人物建模。要真实效果，必须显式 `--mode api`。
+
+**`runs/` 在 Git 里看不到**
+
+`runs/`、`exports/`、`eval_runs/`、`data/` 都被 `.gitignore` 排除。它们是你的本地数据，不会自动进入仓库，也不会自动备份。
+
+**浏览器打开后提示没有有效邀请**
+
+邀请可能已过期、被撤销，或链接对应的服务已经停止。让所有者重新创建邀请；管理员令牌丢失时需要重启服务并重新创建会话。
+
+### 第二部分：给 AI 编码助手（vibecoding）的操作说明
+
+这一节是给 Cursor、Claude Code、OpenCode、Codex 等 AI 编码助手看的。真人用户不需要读。
+
+如果你是被要求修改这个仓库的 AI，请先做这几件事：
+
+1. 读 `AGENTS.md`、`docs/contract.md`、`docs/architecture.md`、`docs/evaluation.md`。
+2. 用 `git status` 确认工作区；不要覆盖用户未提交的修改。
+3. 以当前代码和测试为准。文档和 `AGENTS.md` 里的旧范围描述如果与实现冲突，先报告，不要按旧描述删除已有功能。
+
+#### 硬性边界
+
+- **默认只用 Mock。** 未经用户明确授权，不得用真实聊天或真实 API Key 调用付费 API。
+- **不提交私人数据。** 不读、不复制、不提交 `data/`、`runs/`、`exports/`、`eval_runs/`、`config.toml`、`.env*`、`*.psim`。
+- **不伪造质量。** 工程测试通过、Mock 输出、合成评分、单评审偏好都不能写成“人物模拟质量已通过”。真实质量状态仍以 `docs/evaluation.md` 和 manifest 为准。
+- **不绕过证据约束。** `quote` 必须由代码从原文切片；对方的话不能变成目标人物的事实；失败或不完整的 run 不能被 Mode C 加载。
+- **不削弱安全边界。** 公开端口不能注册 `/admin/*`；管理员监听器只绑定 loopback；不删除输出检查、会话清理或测试断言来让功能“跑通”。
+- **不擅自提交、推送、打标签或发布。** 只有用户明确要求时才做这些操作。
+
+#### 代码和测试
+
+- 新功能或 bugfix 先写失败测试，再写最小实现。
+- 修 bug 先写复现测试；不得删除测试或降低断言。
+- 测试只能使用合成聊天、假姓名/电话和 `tmp_path`；不得使用真实聊天、真实 Key 或个人绝对路径。
+- 改动完成后运行完整测试：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+
+当前基线是 **180 passed**（Windows，Python 3.12.10）。如果你新增了测试，基线数字会变化；以实际输出为准。
+
+- 涉及打包时运行：
+
+```powershell
+.\.venv\Scripts\python.exe -m build
+```
+
+并确认产物不包含 `data/`、`runs/`、`exports/`、`eval_runs/`、`config.toml`、`.env` 或 `*.psim`。
+
+#### 改哪里
+
+- 输入/解析：`parser.py`、`docs/input-format.md`、`tests/test_parser.py`。
+- 切分/预算：`chunking.py`、`budget.py`、相关测试。
+- evidence 建模：`pipeline.py`、`modeling/`、`prompts/`。
+- whole-chat：`wholechat/`。
+- 渲染：`rendering/markdown.py`、`docs/output-format.md`。
+- Provider：`providers/`、`config.py`。
+- Mode C：`runtime/`、`server/`、`tests/test_*mode_c*`。
+- 评测：`evaluation/prepare.py`、`evaluation/score.py`、`docs/evaluation.md`。
+- 公共 CLI/契约：`cli.py`、`docs/contract.md`、`README.md`。
+
+新增配置项时，必须同步更新 `config.example.toml`、`docs/configuration.md` 和测试；新增输出检查时，必须同时有正例和反例。
+
+#### 评测时的额外规则
+
+- `eval score` 只汇总真实人工采集的 `human_collected` 回答；不得把 Mock 或合成数据写成 `evaluated`。
+- `status=evaluated` 不等于 `gate_passed=true`；报告要同时看数据完整性、维度分数和失败标记。
+- 现有 30 题 A/B 只有一次单评审偏好，没有完成五维评分、第二评审或重复生成；不能据此宣布 A/B 整体胜负。
+- 需要真实付费调用时，先停止并说明预计调用次数、模型和费用，等待用户明确授权。
+
+#### 完成前检查
+
+- [ ] 测试实际运行并通过，记录真实数量和平台。
+- [ ] 新增/修改的命令、路径、版本号与 README/契约一致。
+- [ ] 没有提交真实聊天、Key、邀请文件、run 或 eval 产物。
+- [ ] 没有把 Mock 或工程测试通过写成人物质量结论。
+- [ ] `git diff` 中没有本地绝对路径、密钥或私人数据。
+- [ ] 如果改了 CLI、配置或安全边界，相关文档和测试一起更新。
+
 ## 技术实现
+
+这一部分解释“为什么这样实现”。如果你只想使用，前面的说明书已经够了。
 
 ### 1. 输入不是“随便一段聊天”
 
@@ -193,230 +737,6 @@ python -m build
 
 当前工程测试通过只证明代码按契约工作，不证明生成的人物像本人。这个区别在后面的“评测与当前质量”里会再说明一次。
 
-## 快速开始
-
-### 安装
-
-要求 Python **3.11+**。当前主要验证环境是 Windows + Python 3.12.10；CI 也覆盖 Linux。
-
-Windows PowerShell：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-.\.venv\Scripts\person-sim.exe --version
-```
-
-macOS / Linux：
-
-```bash
-python -m venv .venv
-./.venv/bin/python -m pip install -e ".[dev]"
-./.venv/bin/person-sim --version
-```
-
-也可以用 `requirements-dev.lock` 复现开发环境。真实 API Key **只**从 `PSIM_API_KEY` 读取。
-
-### 先验证环境和输入
-
-```powershell
-person-sim doctor
-person-sim validate --input examples/sample_chat.txt --target A
-person-sim plan --input examples/sample_chat.txt --target A
-```
-
-`doctor` 默认不联网；`plan` 只做离线切分和预算检查，不调用模型，也不打印聊天正文。
-
-### 构建一份 Mock 档案
-
-Mock 完全离线、确定性输出，不会产生 API 费用。它只用于验证流程，不代表真实人物建模。
-
-```powershell
-# 让 auto 选择路径（短聊天通常会选 whole）
-person-sim build --input examples/sample_chat.txt --target A --mode mock --out runs
-
-# 强制走 evidence，生成 13 章档案 + 证据账本
-person-sim build --input examples/sample_chat.txt --target A --mode mock --strategy evidence --out runs
-
-# 强制走 whole
-person-sim build --input examples/sample_chat.txt --target A --mode mock --strategy whole --out runs
-```
-
-终端会打印 `run_dir`。查看 `person_simulation.md` 和 `system_prompt.md`；Mock 产物会显著标记为合成演示。
-
-`evidence` run 还可以：
-
-```powershell
-person-sim resume --run runs/<evidence-run-id>
-person-sim render --run runs/<evidence-run-id> --out exports/demo
-```
-
-`render` 遇到已存在的文件会拒绝覆盖。`whole` run 没有 `resume` / `render` 的同等语义，直接使用它的生成文件。
-
-### 启动一次第三方体验（Mock）
-
-先确认 run 能加载：
-
-```powershell
-person-sim serve --run runs/<run-id> --mode mock --check
-```
-
-`--check` 只校验 run、版本、模式和配置，不监听端口。
-
-启动公开服务：
-
-```powershell
-person-sim serve --run runs/<run-id> --mode mock
-```
-
-终端会打印：
-
-- `public_url`：本机访问地址；
-- `admin_url`：仅本机可达的管理员地址；
-- 管理员令牌来源；如果没有设置令牌，`serve` 会自动生成并在终端打印一次。
-
-如果要自己管理管理员令牌，可以提前设置环境变量，或使用文件：
-
-```powershell
-$env:PSIM_ADMIN_TOKEN = "<管理员令牌>"
-# 或者
-person-sim serve --run runs/<run-id> --mode mock --admin-token-file .secrets/admin.txt
-```
-
-管理员令牌不接受明文命令行参数，避免出现在进程列表里。
-
-如果 `serve` 在启动时自动生成了管理员令牌，请另开一个终端，把终端打印的 `admin_token` 设为 `PSIM_ADMIN_TOKEN`，再执行下面的邀请命令。自动生成的令牌只打印一次；`serve` 正在前台运行时，不能在同一个终端里继续输入命令。
-
-创建加密邀请：
-
-```powershell
-$env:PSIM_ADMIN_TOKEN = "<serve 打印的管理员令牌，或你自己设置的令牌>"
-$env:PSIM_INVITE_PASSPHRASE = "<邀请口令>"
-
-person-sim invite create `
-  --server <serve 打印的 admin_url> `
-  --endpoint <serve 打印的 public_url> `
-  --out invite.psim `
-  --label "给同学" `
-  --expires-in 3600
-```
-
-`invite create` 会打印 `invite_id`、`web_url` 和过期时间。`invite.psim` 只包含服务地址、令牌、有效期、备注、可选指纹和限额。把邀请文件或链接通过安全渠道发给体验者；口令最好走另一条渠道。`web_url` 里带有访问令牌，拿到链接的人就能建立会话，不要公开贴出或转发到不受控的群聊。
-
-体验者使用客户端：
-
-```powershell
-$env:PSIM_INVITE_PASSPHRASE = "<邀请口令>"
-person-sim connect --invite invite.psim
-```
-
-不带 `--message` 时进入交互式对话；输入 `/exit` 结束。也可以只发一条：
-
-```powershell
-person-sim connect --invite invite.psim --message "在吗？"
-```
-
-浏览器兜底：把 `invite create` 打印的 `web_url` 发给体验者，用浏览器打开。页面会常驻显示“AI 模拟角色，不是本人”。
-
-撤销和删除：
-
-```powershell
-person-sim session list --server <admin_url>
-person-sim session delete --server <admin_url> <session-id>
-person-sim invite list --server <admin_url>
-person-sim invite revoke --server <admin_url> --invite-id <invite-id>
-```
-
-这些管理员命令同样需要 `PSIM_ADMIN_TOKEN` 或 `--admin-token-file`。
-
-默认只监听 `127.0.0.1`。如果确实要监听局域网，必须显式开启：
-
-```powershell
-person-sim serve `
-  --run runs/<run-id> --mode mock `
-  --host 0.0.0.0 --allow-lan `
-  --allowed-host 192.168.1.20
-```
-
-但要注意：`invite create` 的 `--endpoint` 只接受 loopback 的 `http` 或任意 `https`。纯 HTTP 的局域网地址不能直接用来生成邀请。要在局域网或公网给朋友用，需要一个 HTTPS 入口，例如反向代理、Tailscale Serve 或 Cloudflare Tunnel；项目本身不内置 TLS/ACME。
-
-### 配置真实模型
-
-复制示例配置：
-
-```powershell
-Copy-Item config.example.toml config.toml
-```
-
-最小配置示例：
-
-```toml
-[model]
-mode = "api"
-provider = "openai_chat"
-model = "YOUR_MODEL_ID"
-base_url = "https://YOUR_PROVIDER_HOST/v1"
-context_window = 32768
-max_output_tokens = 4096
-```
-
-`base_url` 是 API 根地址，不要包含 `/chat/completions`。真实 API 必须显式 `mode = "api"`，并且需要 `PSIM_API_KEY`：
-
-```powershell
-$env:PSIM_API_KEY = "<你的 API Key>"
-person-sim doctor --config config.toml
-person-sim build --input data/chat.txt --target A --mode api --config config.toml --out runs
-```
-
-`doctor` 默认只检查配置，不发送请求。要显式做一次最小真实 API 探测：
-
-```powershell
-person-sim doctor --config config.toml --probe-api
-```
-
-这会发送一次真实请求，可能产生费用；没有明确授权时不要运行。
-
-模式 C 的常用配置：
-
-```toml
-[simulation]
-host = "127.0.0.1"
-port = 8765
-allow_lan = false
-secure_cookies = false
-max_sessions = 8
-ttl_minutes = 30
-idle_minutes = 10
-max_turns = 30
-max_input_chars = 2000
-max_output_tokens = 1024
-requests_per_minute = 6
-max_concurrency = 2
-allowed_hosts = ["127.0.0.1", "localhost", "::1"]
-blocked_terms = []
-log_metadata = false
-```
-
-`simulation` 配置不参与建模 run 的 `config_hash`，升级到带模式 C 的版本不会让旧 run 失效。完整配置项、环境变量和优先级见 `docs/configuration.md`；优先级是 **CLI 明示值 > `PSIM_` 环境变量 > TOML > 默认值**。`config.toml` 已被 `.gitignore` 忽略，不要提交。
-
-### 公网共享
-
-0.2.0 不内置公网 TLS、ACME 或端口转发。常见做法：
-
-- **Tailscale**：设备间加密网络，适合只给少数朋友用；
-- **Cloudflare Tunnel**：提供公网 HTTPS，但 Cloudflare 会终止 TLS，能看到流量；
-- **反向代理**：由所有者自行提供证书。
-
-隧道只转发公开端口，**不要转发管理员端口**。HTTPS 隧道场景建议设置：
-
-```toml
-[simulation]
-secure_cookies = true
-allowed_hosts = ["127.0.0.1", "localhost", "::1", "your-tunnel-host"]
-```
-
-并把隧道域名通过 `--allowed-host` 或 `allowed_hosts` 加入白名单。邀请的 `--endpoint` 应填写体验者实际访问的 HTTPS 地址，而不是本机 `public_url`。
-
 ## 数据、隐私与边界
 
 ### 输入数据放在哪里
@@ -477,19 +797,7 @@ run 目录和 `exports/` 不会因为结束 Mode C 会话而删除；它们仍�
 
 评估工具覆盖五个维度：语言风格相似性、人格与决策一致性、对另一位参与者的态度、未见情境的泛化、历史事实准确性；同时记录身份混淆、编造历史、事实错误和无依据推断。`eval score` 拒绝 Mock 回答，要求每题至少两次人工采集，并生成 `quality_report.json` / `quality_report.md`。
 
-完整的数据格式、评分规则、人工步骤、结果保存方式和局限见 [`docs/evaluation.md`](docs/evaluation.md)。如果你想自己评，最低需要：
-
-```powershell
-person-sim eval prepare --input data/chat.txt --target A --out eval_runs/my-person
-person-sim build --input eval_runs/my-person/train_chat.txt --target A --mode api --out runs
-# 人工把回答填入 responses.jsonl，把评分填入 ratings.csv
-person-sim eval score `
-  --bundle eval_runs/my-person `
-  --responses eval_runs/my-person/responses.jsonl `
-  --ratings eval_runs/my-person/ratings.csv
-```
-
-如果原聊天的说话人标签不是 `A`/`B`，`eval prepare` 和 `build` 都要带上相应的 `--speaker-a` / `--speaker-b` / `--target`；否则标签不会自动匹配。
+完整的数据格式、评分规则、人工步骤、结果保存方式和局限见 [`docs/evaluation.md`](docs/evaluation.md)。
 
 不要把自动化测试通过率、Mock 输出、输出安全检查通过或单次评分当成“人物模拟质量已达标”。
 
