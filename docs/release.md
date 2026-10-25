@@ -2,8 +2,8 @@
 
 ## 版本
 
-- 当前开发版本：`0.2.0`（模式 C 已实现，尚未正式发版）。
-- 发布 `0.2.0` 前完成验收；`__version__`、`pyproject.toml`、`CHANGELOG.md` 已对齐。
+- 当前版本：`0.2.0`（2026-10-25 已发布）。
+- `__version__`、`pyproject.toml`、`CHANGELOG.md` 已对齐。
 - `resume` 接受 `0.1.0` 与 `0.2.0` 的旧 run 指纹，避免升级后无法续跑。
 - 版本号采用语义化版本；破坏 CLI/数据契约时必须升主版本并写迁移说明。
 
@@ -90,4 +90,13 @@ Release 说明至少包含：版本、变更、安装、快速开始、隐私/�
 - 人物模拟质量未做正式人工评分。
 - 独立桌面客户端、MCP adapter、内置公网 TLS/ACME 未实现。
 - GitHub 仓库地址、安全联系方式和正式发布尚未确定。
-- `--allow-lan` 需要显式 `--allowed-host` 加入局域网 IP/隧道域名；不会自动信任所有 Host。
+- `--allow-lan` 会加入本机检测到的地址，但隧道域名仍需显式 `--allowed-host`。
+
+## 发布记录
+
+- 仓库：https://github.com/l123z456k789-png/person-simulator
+- 分支：`main`（默认）、`feat/mode-c`
+- 标签：`v0.2.0`（指向发布提交 `408e011`）
+- Release：https://github.com/l123z456k789-png/person-simulator/releases/tag/v0.2.0
+- 资产：wheel `person_simulator-0.2.0-py3-none-any.whl`、sdist `person_simulator-0.2.0.tar.gz`
+- GitHub Actions：`main` 与 `feat/mode-c` 的 CI 均通过（Windows/Linux × Python 3.11/3.12，构建检查）。
