@@ -129,6 +129,22 @@ def test_idle_timeout_marks_expired():
         manager.get(session.id)
 
 
+def test_end_and_expiry_clear_message_content():
+    clock = Clock()
+    manager = make_manager(clock=clock)
+    ended = manager.create("invite-a")
+    manager.record_exchange(ended, "secret user text", "secret reply")
+    manager.end(ended.id)
+    assert ended.messages == []
+
+    expiring = manager.create("invite-b")
+    manager.record_exchange(expiring, "secret user text", "secret reply")
+    clock.advance(minutes=31)
+    with pytest.raises(SessionExpiredError):
+        manager.get(expiring.id)
+    assert expiring.messages == []
+
+
 def test_list_metadata_has_no_message_content():
     manager = make_manager()
     session = manager.create("invite-a")

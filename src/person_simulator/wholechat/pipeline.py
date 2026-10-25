@@ -10,12 +10,19 @@ from typing import Any
 
 from person_simulator.budget import PACKAGING_MARGIN, estimate_tokens, safety_margin, validate_context_budget
 from person_simulator.config import Settings
-from person_simulator.errors import ConfigError, InputError, PipelineError, ResponseFormatError
+from person_simulator.errors import (
+    ConfigError,
+    InputError,
+    PipelineError,
+    ResponseFormatError,
+    RunModeError,
+)
 from person_simulator.models import Message
 from person_simulator.parser import ParsedChat, parse_chat
 from person_simulator.providers import build_client
 from person_simulator.providers.base import ModelClient, ModelRequest
 from person_simulator.providers.runner import RequestRunner
+from person_simulator.runtime.persona import load_runtime_persona
 from person_simulator.storage import RunStore, make_run_id, utcnow
 from person_simulator.wholechat.prompts import (
     ANALYSIS_SYSTEM,
@@ -248,8 +255,14 @@ def simulate_run(
     settings: Settings,
     client: ModelClient | None = None,
 ) -> str:
-    store = RunStore.open(Path(run_dir))
-    system_prompt = (store.path / "system_prompt.md").read_text(encoding="utf-8")
+    loaded = load_runtime_persona(run_dir)
+    if loaded.persona.is_mock != settings.is_mock:
+        raise RunModeError(
+            "run 的 Mock/API 模式与当前 simulate 模式不一致",
+            stage="simulate",
+            hint="Mock run 使用 --mode mock；真实 run 使用 --mode api",
+        )
+    system_prompt = loaded.persona.system_prompt
     active = client or build_client(settings)
     try:
         runner = RequestRunner(

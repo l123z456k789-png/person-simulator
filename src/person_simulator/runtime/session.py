@@ -99,10 +99,14 @@ class SessionManager:
         if now - session.created_at >= self.ttl:
             session.state = SessionState.EXPIRED
             session.ended_at = now
+            session.messages.clear()
+            session.request_times.clear()
             return
         if now - session.last_active >= self.idle:
             session.state = SessionState.EXPIRED
             session.ended_at = now
+            session.messages.clear()
+            session.request_times.clear()
 
     def sweep(self, now: datetime | None = None) -> None:
         current = now or self._now()
@@ -175,6 +179,8 @@ class SessionManager:
             if session.state == SessionState.ACTIVE:
                 session.state = SessionState.ENDED
                 session.ended_at = current
+                session.messages.clear()
+                session.request_times.clear()
 
     def delete(self, session_id: str) -> None:
         with self._lock:

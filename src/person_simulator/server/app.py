@@ -340,8 +340,8 @@ class PublicHandler(_BaseHandler):
                 self.wfile.write(body)
                 return
             if path == "/api/chat":
-                session = self._session()
                 payload = self._read_json()
+                session = self._session()
                 message = payload.get("message")
                 if not isinstance(message, str):
                     raise InputTooLongError("message 必须是字符串", stage="server")
@@ -414,7 +414,11 @@ class AdminHandler(_BaseHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         try:
-            self._require_admin()
+            try:
+                self._require_admin()
+            except PersonSimError:
+                self._drain_body()
+                raise
             if path == "/admin/invites":
                 payload = self._read_json()
                 label = str(payload.get("label", ""))
