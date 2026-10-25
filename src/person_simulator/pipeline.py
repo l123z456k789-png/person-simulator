@@ -58,6 +58,13 @@ from person_simulator.models import (
     TaskStatus,
 )
 from person_simulator.parser import ParsedChat, parse_chat
+from person_simulator.privacy import (
+    PrivacyMode,
+    PrivacyReport,
+    apply_privacy,
+    scan_text,
+)
+from person_simulator.progress import ProgressCallback, ProgressEvent, emit
 from person_simulator.providers import build_client
 from person_simulator.providers.base import ModelClient
 from person_simulator.providers.runner import RequestRunner
@@ -90,6 +97,46 @@ def _hash_payload(payload: Any) -> str:
 
 def _hash_model(model: Any) -> str:
     return _hash_payload(model.model_dump(mode="json"))
+
+
+def _limit_parsed(
+    parsed: ParsedChat,
+    limit: int | None,
+) -> tuple[ParsedChat, int, bool]:
+    """Return a pilot slice while keeping the original source hash."""
+
+    total = len(parsed.messages)
+    if limit is None or limit >= total:
+        return parsed, total, False
+    if limit < 1:
+        raise InputError(
+            "limit-messages 必须大于 0",
+            stage="pilot",
+            hint="使用 1 到原文消息数之间的整数",
+        )
+    messages = parsed.messages[:limit]
+    present = {message.speaker for message in messages}
+    if parsed.speaker_a not in present or parsed.speaker_b not in present:
+        raise InputError(
+            "pilot 前 N 条消息没有同时覆盖两位说话人",
+            stage="pilot",
+            hint=f"提高 --limit-messages（当前 {limit}），或改用完整聊天",
+        )
+    warnings = [
+        *parsed.warnings,
+        f"pilot: 只分析前 {limit}/{total} 条消息；source_hash 仍对应完整原文",
+    ]
+    return (
+        ParsedChat(
+            messages=messages,
+            warnings=warnings,
+            source_hash=parsed.source_hash,
+            speaker_a=parsed.speaker_a,
+            speaker_b=parsed.speaker_b,
+        ),
+        total,
+        True,
+    )
 
 
 def _new_manifest(
@@ -566,6 +613,7 @@ def _build_report_text(
     skipped_examples: list[str],
     messages: dict[str, Message],
     system_prompt_text: str | None = None,
+    privacy: PrivacyReport | None = None,
 ) -> str:
     stats = persona_stats(persona) if persona else {"features": {}, "empty_dimensions": [], "examples": 0, "conflicts": 0}
     surface = language_stats(messages.values(), manifest.target)
@@ -594,6 +642,20 @@ def _build_report_text(
         f"- 覆盖字符: {coverage.covered_chars}",
         f"- coverage ratio: {coverage.ratio:.4f}",
         f"- 片段数: {len(plan.chunks)}",
+    ]
+    source_messages = manifest.budget.get("source_message_count")
+    analyzed_messages = manifest.budget.get("analyzed_message_count")
+    if (
+        manifest.budget.get("limit_messages") is not None
+        and isinstance(source_messages, int)
+        and isinstance(analyzed_messages, int)
+        and analyzed_messages < source_messages
+    ):
+        lines.append(
+            f"- pilot: 只分析前 {analyzed_messages}/{source_messages} 条消息；"
+            "不能把本报告当作完整人物结论"
+        )
+    lines.extend([
         "",
         "## 语言统计（代码计算，分母为目标消息）",
         "",
@@ -612,7 +674,7 @@ def _build_report_text(
         "",
         "| 维度 | feature 数 | observation 数 |",
         "|---|---:|---:|",
-    ]
+    ])
     for dimension in Dimension:
         count = sum(
             1 for observation in observations if observation.dimension == dimension
@@ -631,6 +693,15 @@ def _build_report_text(
     )
     if skipped_examples:
         lines.append(f"- 被跳过的示例候选: {len(skipped_examples)}（{skipped_examples[0]}）")
+    if privacy is not None:
+        lines.extend(["", "## 隐私扫描", ""])
+        lines.append(f"- 直接身份信息命中: {privacy.total} 处（仅统计，不回显内容）")
+        for finding in privacy.findings:
+            lines.append(f"- {finding.kind}: {finding.count}")
+        if privacy.total:
+            lines.append(
+                "- 运行目录仍保留原始 messages.jsonl/persona.json；只有 person_simulation.md 与 system_prompt.md 会按本次隐私模式处理。"
+            )
     lines.extend(
         [
             "",
@@ -659,6 +730,8 @@ def _execute(
     client: ModelClient,
     *,
     runner: RequestRunner | None = None,
+    privacy_mode: PrivacyMode = "warn",
+    progress: ProgressCallback | None = None,
 ) -> BuildResult:
     manifest.analysis_status = AnalysisStatus.RUNNING
     manifest.export_status = ExportStatus.PENDING
@@ -669,12 +742,24 @@ def _execute(
         client,
         max_attempts=settings.retry.max_attempts,
         max_requests=settings.budget.max_requests_per_run,
+        progress=progress,
     )
 
     analyses: list[VerifiedSegment] = []
     leaf_chunks: list[Chunk] = []
     try:
-        for chunk in plan.chunks:
+        for number, chunk in enumerate(plan.chunks, start=1):
+            emit(
+                progress,
+                ProgressEvent(
+                    stage="extract",
+                    message="处理分片",
+                    current=number,
+                    total=len(plan.chunks),
+                    task_id=f"extract:{chunk.id}",
+                    requests_used=runner.used,
+                ),
+            )
             leaves = _run_extract_tree(
                 store,
                 manifest,
@@ -721,7 +806,18 @@ def _execute(
         )
 
         features_by_dimension: dict[Dimension, list[Feature]] = {}
-        for dimension in Dimension:
+        for dimension_number, dimension in enumerate(Dimension, start=1):
+            emit(
+                progress,
+                ProgressEvent(
+                    stage="reduce",
+                    message="汇总维度",
+                    current=dimension_number,
+                    total=len(Dimension),
+                    task_id=f"reduce:{dimension.value}",
+                    requests_used=runner.used,
+                ),
+            )
             dimension_observations = [
                 observation
                 for observation in observations
@@ -805,14 +901,33 @@ def _execute(
         )
         _write_report(store, draft_report)
 
+        emit(
+            progress,
+            ProgressEvent(
+                stage="render",
+                message="渲染导出文件",
+                requests_used=runner.used,
+            ),
+        )
         export_text = render_persona(
             persona,
             manifest,
             messages,
             observations=observations,
         )
-        assert_self_contained(export_text)
         system_prompt_text = render_system_prompt(persona, messages)
+        privacy = scan_text(export_text + "\n" + system_prompt_text)
+        export_text, _ = apply_privacy(
+            export_text,
+            mode=privacy_mode,
+            label="person_simulation.md ",
+        )
+        system_prompt_text, _ = apply_privacy(
+            system_prompt_text,
+            mode=privacy_mode,
+            label="system_prompt.md ",
+        )
+        assert_self_contained(export_text)
         assert_self_contained(system_prompt_text)
         target_path = store._path("person_simulation.md")
         prompt_path = store._path("system_prompt.md")
@@ -825,6 +940,15 @@ def _execute(
             target_path.unlink(missing_ok=True)
             prompt_path.unlink(missing_ok=True)
             raise
+        emit(
+            progress,
+            ProgressEvent(
+                stage="export",
+                message="导出完成",
+                task_id=manifest.run_id,
+                requests_used=runner.used,
+            ),
+        )
 
         report_text = _build_report_text(
             manifest=manifest,
@@ -837,8 +961,18 @@ def _execute(
             skipped_examples=skipped_examples,
             messages=messages,
             system_prompt_text=system_prompt_text,
+            privacy=privacy,
         )
         _write_report(store, report_text)
+        emit(
+            progress,
+            ProgressEvent(
+                stage="complete",
+                message="构建完成",
+                task_id=manifest.run_id,
+                requests_used=runner.used,
+            ),
+        )
         return BuildResult(
             run_dir=store.path,
             manifest=manifest,
@@ -855,6 +989,18 @@ def _execute(
                 "stats": persona_stats(persona),
                 "language_stats": language_stats(parsed.messages, manifest.target).as_dict(),
                 "system_prompt_characters": len(system_prompt_text),
+                "privacy": privacy.as_dict(),
+                "limited": bool(
+                    manifest.budget.get("limit_messages") is not None
+                    and manifest.budget.get("analyzed_message_count")
+                    < manifest.budget.get("source_message_count", 0)
+                ),
+                "source_messages": manifest.budget.get(
+                    "source_message_count", len(parsed.messages)
+                ),
+                "analyzed_messages": manifest.budget.get(
+                    "analyzed_message_count", len(parsed.messages)
+                ),
             },
             system_prompt_path=prompt_path,
         )
@@ -882,8 +1028,21 @@ def build_run(
     out_root: str | Path = DEFAULT_OUT,
     client: ModelClient | None = None,
     runner: RequestRunner | None = None,
+    privacy_mode: PrivacyMode = "warn",
+    progress: ProgressCallback | None = None,
+    limit_messages: int | None = None,
 ) -> BuildResult:
     parsed = parse_chat(input_path, speaker_a, speaker_b, target=target)
+    parsed, source_messages, limited = _limit_parsed(parsed, limit_messages)
+    emit(
+        progress,
+        ProgressEvent(
+            stage="parse",
+            message="解析聊天",
+            current=len(parsed.messages),
+            total=len(parsed.messages),
+        ),
+    )
     interlocutor = (
         parsed.speaker_b if target == parsed.speaker_a else parsed.speaker_a
     )
@@ -895,6 +1054,16 @@ def build_run(
     )
     if not plan.coverage.complete:
         raise InputError("原文覆盖不完整，拒绝构建", stage="chunking")
+    emit(
+        progress,
+        ProgressEvent(
+            stage="plan",
+            message="切分完成",
+            current=len(plan.chunks),
+            total=len(plan.chunks),
+            requests_used=0,
+        ),
+    )
     manifest = _new_manifest(
         parsed,
         target=target,
@@ -902,6 +1071,9 @@ def build_run(
         settings=settings,
         input_path=str(Path(input_path).resolve()),
     )
+    manifest.budget["limit_messages"] = limit_messages
+    manifest.budget["source_message_count"] = source_messages
+    manifest.budget["analyzed_message_count"] = len(parsed.messages)
     run_id = make_run_id(target, parsed.source_hash)
     store = RunStore.create(Path(out_root), run_id)
     manifest.run_id = store.path.name
@@ -911,7 +1083,17 @@ def build_run(
         _save_manifest(store, manifest)
         active_client = client or build_client(settings)
         try:
-            return _execute(store, manifest, parsed, plan, settings, active_client, runner=runner)
+            return _execute(
+                store,
+                manifest,
+                parsed,
+                plan,
+                settings,
+                active_client,
+                runner=runner,
+                privacy_mode=privacy_mode,
+                progress=progress,
+            )
         finally:
             close = getattr(active_client, "close", None)
             if callable(close):
@@ -980,6 +1162,8 @@ def resume_run(
     settings: Settings,
     client: ModelClient | None = None,
     runner: RequestRunner | None = None,
+    privacy_mode: PrivacyMode = "warn",
+    progress: ProgressCallback | None = None,
 ) -> BuildResult:
     store = RunStore.open(Path(run_dir))
     store.acquire_lock()
@@ -991,6 +1175,24 @@ def resume_run(
         _verify_resume_fingerprint(manifest, settings)
         parsed = _load_parsed(store, manifest)
         plan = _load_plan(store, parsed, manifest, settings)
+        emit(
+            progress,
+            ProgressEvent(
+                stage="parse",
+                message="加载运行记录",
+                current=len(parsed.messages),
+                total=len(parsed.messages),
+            ),
+        )
+        emit(
+            progress,
+            ProgressEvent(
+                stage="plan",
+                message="加载切分计划",
+                current=len(plan.chunks),
+                total=len(plan.chunks),
+            ),
+        )
         if (
             manifest.export_status == ExportStatus.COMPLETE
             and store.exists("persona.json")
@@ -998,18 +1200,52 @@ def resume_run(
             and store.exists("system_prompt.md")
         ):
             persona = Persona.model_validate(store.read_json("persona.json"))
+            export_text = (store.path / "person_simulation.md").read_text(
+                encoding="utf-8"
+            )
+            prompt_text = (store.path / "system_prompt.md").read_text(
+                encoding="utf-8"
+            )
+            privacy = scan_text(export_text + "\n" + prompt_text)
+            export_text, _ = apply_privacy(
+                export_text,
+                mode=privacy_mode,
+                label="person_simulation.md ",
+            )
+            prompt_text, _ = apply_privacy(
+                prompt_text,
+                mode=privacy_mode,
+                label="system_prompt.md ",
+            )
+            if privacy_mode == "redact" and privacy.total:
+                store.write_text("person_simulation.md", export_text)
+                store.write_text("system_prompt.md", prompt_text)
             return BuildResult(
                 run_dir=store.path,
                 manifest=manifest,
                 persona=persona,
                 export_path=store.path / "person_simulation.md",
                 system_prompt_path=store.path / "system_prompt.md",
-                report={"resumed": True, "already_complete": True},
+                report={
+                    "resumed": True,
+                    "already_complete": True,
+                    "privacy": privacy.as_dict(),
+                },
             )
         manifest.run_id = store.path.name
         active_client = client or build_client(settings)
         try:
-            result = _execute(store, manifest, parsed, plan, settings, active_client, runner=runner)
+            result = _execute(
+                store,
+                manifest,
+                parsed,
+                plan,
+                settings,
+                active_client,
+                runner=runner,
+                privacy_mode=privacy_mode,
+                progress=progress,
+            )
             result.report["resumed"] = True
             return result
         finally:
@@ -1020,7 +1256,13 @@ def resume_run(
         store.release_lock()
 
 
-def render_run(run_dir: str | Path, out_dir: str | Path) -> Path:
+def render_run(
+    run_dir: str | Path,
+    out_dir: str | Path,
+    *,
+    privacy_mode: PrivacyMode = "warn",
+    progress: ProgressCallback | None = None,
+) -> Path:
     store = RunStore.open(Path(run_dir))
     manifest = Manifest.model_validate(store.read_json("manifest.json"))
     if manifest.analysis_status != AnalysisStatus.COMPLETE or manifest.export_status != ExportStatus.COMPLETE:
@@ -1038,9 +1280,23 @@ def render_run(run_dir: str | Path, out_dir: str | Path) -> Path:
         observations = [
             Observation.model_validate(row) for row in store.read_jsonl("observations.jsonl")
         ]
+    emit(
+        progress,
+        ProgressEvent(stage="render", message="渲染导出文件", task_id=manifest.run_id),
+    )
     text = render_persona(persona, manifest, messages, observations=observations)
-    assert_self_contained(text)
     system_prompt = render_system_prompt(persona, messages)
+    text, _ = apply_privacy(
+        text,
+        mode=privacy_mode,
+        label="person_simulation.md ",
+    )
+    system_prompt, _ = apply_privacy(
+        system_prompt,
+        mode=privacy_mode,
+        label="system_prompt.md ",
+    )
+    assert_self_contained(text)
     assert_self_contained(system_prompt)
     destination = Path(out_dir)
     destination.mkdir(parents=True, exist_ok=True)
@@ -1068,4 +1324,12 @@ def render_run(run_dir: str | Path, out_dir: str | Path) -> Path:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
         raise StorageError("导出写入失败", stage="render", hint=str(target)) from exc
+    emit(
+        progress,
+        ProgressEvent(
+            stage="export",
+            message="导出完成",
+            task_id=manifest.run_id,
+        ),
+    )
     return destination / "person_simulation.md"

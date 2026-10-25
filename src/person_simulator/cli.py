@@ -31,6 +31,8 @@ from person_simulator.evaluation.score import score_eval, write_quality_report
 from person_simulator.models import Manifest
 from person_simulator.parser import parse_chat
 from person_simulator.pipeline import build_run, render_run, resume_run
+from person_simulator.privacy import PrivacyMode, scan_text
+from person_simulator.progress import ProgressCallback, ProgressEvent
 from person_simulator.providers import build_client
 from person_simulator.providers.base import ModelRequest
 from person_simulator.runtime.client import AdminClient, SimulationClient
@@ -42,6 +44,7 @@ from person_simulator.runtime.invite import (
 from person_simulator.runtime.models import Audience
 from person_simulator.runtime.persona import load_runtime_persona
 from person_simulator.runtime.service import build_model_messages
+from person_simulator.runs import delete_run, inspect_run, list_runs, purge_runs
 from person_simulator.server import InviteRegistry, create_server
 from person_simulator.storage import RunStore
 from person_simulator.wholechat.pipeline import (
@@ -108,6 +111,55 @@ def _overrides(args: argparse.Namespace) -> dict[str, Any]:
 
 def _settings(args: argparse.Namespace):
     return load_settings(config_path=getattr(args, "config", None), cli_overrides=_overrides(args))
+
+
+def _privacy_mode(args: argparse.Namespace) -> PrivacyMode:
+    if getattr(args, "redact_pii", False):
+        return "redact"
+    if getattr(args, "privacy_strict", False):
+        return "block"
+    return "warn"
+
+
+def _progress_callback(args: argparse.Namespace) -> ProgressCallback | None:
+    if getattr(args, "json_progress", False):
+        def emit_json(event: ProgressEvent) -> None:
+            print(
+                json.dumps(event.as_dict(), ensure_ascii=False),
+                file=sys.stderr,
+            )
+
+        return emit_json
+    if getattr(args, "progress", False):
+        def emit_text(event: ProgressEvent) -> None:
+            position = ""
+            if event.current is not None and event.total is not None:
+                position = f" {event.current}/{event.total}"
+            requests = (
+                f" requests={event.requests_used}"
+                if event.requests_used is not None
+                else ""
+            )
+            print(
+                f"progress {event.stage}{position} {event.message}{requests}",
+                file=sys.stderr,
+            )
+
+        return emit_text
+    return None
+
+
+def _print_privacy(report: dict[str, object], mode: PrivacyMode) -> None:
+    total = int(report.get("total", 0) or 0)
+    print(f"privacy_findings {total}")
+    if mode == "redact" and total:
+        print(f"privacy_redacted {total}")
+    elif mode == "warn" and total:
+        print(
+            "privacy_warning 导出文件包含直接身份信息；请使用 --redact-pii 脱敏，"
+            "或先清理原始聊天。未回显具体内容。",
+            file=sys.stderr,
+        )
 
 
 def _print_error(exc: PersonSimError) -> None:
@@ -224,6 +276,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_build(args: argparse.Namespace) -> int:
     settings = _settings(args)
+    privacy_mode = _privacy_mode(args)
+    progress = _progress_callback(args)
     if args.max_requests is not None:
         settings.budget.max_requests_per_run = args.max_requests
     if settings.model.mode == "api" and not settings.api_key:
@@ -249,14 +303,18 @@ def cmd_build(args: argparse.Namespace) -> int:
             settings=settings,
             out_root=args.out,
             limit_messages=args.limit_messages,
+            privacy_mode=privacy_mode,
+            progress=progress,
         )
         print("status completed")
         print(f"strategy whole")
+        _print_privacy(result.manifest.get("privacy", {}), privacy_mode)
         print(f"run_dir {result.run_dir}")
         print(f"system_prompt {result.system_prompt_path}")
         if result.profile_path:
             print(f"person_simulation {result.profile_path}")
         print(f"messages {result.transcript.message_count}")
+        print(f"limited {str(result.transcript.limited).lower()}")
         if result.manifest.get("is_mock"):
             print("MOCK 合成演示，不代表真实人物建模")
         return 0
@@ -268,9 +326,16 @@ def cmd_build(args: argparse.Namespace) -> int:
         speaker_b=args.speaker_b,
         settings=settings,
         out_root=args.out,
+        privacy_mode=privacy_mode,
+        progress=progress,
+        limit_messages=args.limit_messages,
     )
     print(f"status completed")
     print(f"run_dir {result.run_dir}")
+    print(f"limited {str(result.report.get('limited', False)).lower()}")
+    print(f"source_messages {result.report.get('source_messages', 0)}")
+    print(f"analyzed_messages {result.report.get('analyzed_messages', 0)}")
+    _print_privacy(result.report.get("privacy", {}), privacy_mode)
     print(f"export {result.export_path}")
     print(f"analysis_status {result.manifest.analysis_status.value}")
     print(f"export_status {result.manifest.export_status.value}")
@@ -291,13 +356,21 @@ def cmd_resume(args: argparse.Namespace) -> int:
         print(store.unlock_stale())
         return 0
     settings = _settings(args)
+    privacy_mode = _privacy_mode(args)
+    progress = _progress_callback(args)
     if args.max_requests is not None:
         settings.budget.max_requests_per_run = args.max_requests
     if settings.model.mode == "api" and not settings.api_key:
         raise ConfigError("api 模式需要 PSIM_API_KEY", stage="resume")
-    result = resume_run(args.run, settings=settings)
+    result = resume_run(
+        args.run,
+        settings=settings,
+        privacy_mode=privacy_mode,
+        progress=progress,
+    )
     print("status completed")
     print(f"run_dir {result.run_dir}")
+    _print_privacy(result.report.get("privacy", {}), privacy_mode)
     print(f"export {result.export_path}")
     print(f"analysis_status {result.manifest.analysis_status.value}")
     print(f"export_status {result.manifest.export_status.value}")
@@ -307,12 +380,113 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_render(args: argparse.Namespace) -> int:
-    path = render_run(args.run, args.out)
+    privacy_mode = _privacy_mode(args)
+    progress = _progress_callback(args)
+    path = render_run(
+        args.run,
+        args.out,
+        privacy_mode=privacy_mode,
+        progress=progress,
+    )
     text = path.read_text(encoding="utf-8")
+    prompt_path = path.parent / "system_prompt.md"
+    prompt = prompt_path.read_text(encoding="utf-8")
+    report = scan_text(text + "\n" + prompt)
     print(f"export {path}")
-    print(f"system_prompt {path.parent / 'system_prompt.md'}")
+    print(f"system_prompt {prompt_path}")
     print(f"characters {len(text)}")
     print(f"bytes {len(text.encode('utf-8'))}")
+    _print_privacy(report.as_dict(), privacy_mode)
+    return 0
+
+
+def cmd_runs_list(args: argparse.Namespace) -> int:
+    summaries = list_runs(args.root)
+    if args.json:
+        print(
+            json.dumps(
+                [summary.as_dict() for summary in summaries],
+                ensure_ascii=False,
+            )
+        )
+        return 0
+    print("run_id\tstrategy\tstatus\ttarget\tmock\tlimited\tlocked\tsize\texport")
+    for summary in summaries:
+        print(
+            f"{summary.run_id}\t{summary.strategy}\t{summary.status}\t"
+            f"{summary.target or '-'}\t{str(summary.is_mock).lower()}\t"
+            f"{str(summary.limited).lower()}\t{str(summary.locked).lower()}\t"
+            f"{summary.size_bytes}\t{str(summary.has_export).lower()}"
+        )
+    return 0
+
+
+def cmd_runs_status(args: argparse.Namespace) -> int:
+    detail = inspect_run(args.run, root=args.root)
+    if args.json:
+        print(json.dumps(detail.as_dict(), ensure_ascii=False))
+        return 0
+    summary = detail.summary
+    print(f"run_id {summary.run_id}")
+    print(f"path {summary.path}")
+    print(f"strategy {summary.strategy}")
+    print(f"status {summary.status}")
+    print(f"target {summary.target or 'none'}")
+    print(f"is_mock {str(summary.is_mock).lower()}")
+    print(f"limited {str(summary.limited).lower()}")
+    print(f"created_at {summary.created_at or 'unknown'}")
+    print(f"updated_at {summary.updated_at or 'unknown'}")
+    print(f"size_bytes {summary.size_bytes}")
+    print(f"locked {str(summary.locked).lower()}")
+    print(f"lock_pid {summary.lock_pid or 'none'}")
+    for status, count in sorted(detail.task_counts.items()):
+        print(f"tasks_{status} {count}")
+    for name, present in detail.files.items():
+        print(f"file_{name} {str(present).lower()}")
+    if detail.manifest_error:
+        print(f"manifest_error {detail.manifest_error}", file=sys.stderr)
+    return 0
+
+
+def cmd_runs_delete(args: argparse.Namespace) -> int:
+    if not args.yes:
+        raise ConfigError(
+            "删除 run 需要显式 --yes",
+            stage="runs",
+            hint="先用 runs status 确认目标；本命令不可撤销",
+        )
+    delete_run(args.run, root=args.root, force=args.force)
+    print(f"deleted {args.run}")
+    return 0
+
+
+def cmd_runs_purge(args: argparse.Namespace) -> int:
+    statuses = tuple(args.status or ())
+    selected = purge_runs(
+        args.root,
+        statuses=statuses,
+        older_than_days=args.older_than_days,
+        all_runs=args.all,
+        apply=False,
+    )
+    if not selected:
+        print("no runs matched")
+        return 0
+    if not args.yes:
+        for summary in selected:
+            print(f"would_delete {summary.run_id}\t{summary.status}")
+        print(f"matched {len(selected)}; 使用 --yes 执行删除")
+        return 0
+    deleted = purge_runs(
+        args.root,
+        statuses=statuses,
+        older_than_days=args.older_than_days,
+        all_runs=args.all,
+        apply=True,
+        force=args.force,
+    )
+    for summary in deleted:
+        print(f"deleted {summary.run_id}")
     return 0
 
 
@@ -674,6 +848,34 @@ def cmd_session_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_progress_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--progress",
+        action="store_true",
+        help="向 stderr 输出人类可读的构建进度",
+    )
+    group.add_argument(
+        "--json-progress",
+        action="store_true",
+        help="向 stderr 输出 JSON Lines 进度事件",
+    )
+
+
+def _add_privacy_args(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--redact-pii",
+        action="store_true",
+        help="替换导出文件中的手机号/身份证/邮箱/座机/银行卡，并提示数量",
+    )
+    group.add_argument(
+        "--privacy-strict",
+        action="store_true",
+        help="导出前发现直接身份信息就拒绝发布",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="person-sim",
@@ -712,18 +914,63 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="只分析前 N 条消息（用于 30–50 条 pilot）",
     )
+    _add_privacy_args(build)
+    _add_progress_args(build)
     build.set_defaults(func=cmd_build)
 
     resume = subparsers.add_parser("resume", help="从检查点恢复运行")
     resume.add_argument("--run", required=True)
     _add_config_args(resume, with_mode=True)
     resume.add_argument("--unlock", action="store_true", help="显式移除已确认陈旧的锁")
+    _add_privacy_args(resume)
+    _add_progress_args(resume)
     resume.set_defaults(func=cmd_resume)
 
     render_command = subparsers.add_parser("render", help="从已完成的 run 导出 Markdown")
     render_command.add_argument("--run", required=True)
     render_command.add_argument("--out", required=True)
+    _add_privacy_args(render_command)
+    _add_progress_args(render_command)
     render_command.set_defaults(func=cmd_render)
+
+    runs_parser = subparsers.add_parser("runs", help="查看、删除或清理 run 目录")
+    runs_sub = runs_parser.add_subparsers(dest="runs_command", required=True)
+
+    runs_list = runs_sub.add_parser("list", help="列出 run 元数据")
+    runs_list.add_argument("--root", default="runs")
+    runs_list.add_argument("--json", action="store_true")
+    runs_list.set_defaults(func=cmd_runs_list)
+
+    runs_status = runs_sub.add_parser("status", help="查看单个 run 状态")
+    runs_status.add_argument("run")
+    runs_status.add_argument("--root", default="runs")
+    runs_status.add_argument("--json", action="store_true")
+    runs_status.set_defaults(func=cmd_runs_status)
+
+    runs_delete = runs_sub.add_parser("delete", help="删除单个 run（需要 --yes）")
+    runs_delete.add_argument("run")
+    runs_delete.add_argument("--root", default="runs")
+    runs_delete.add_argument("--yes", action="store_true")
+    runs_delete.add_argument(
+        "--force",
+        action="store_true",
+        help="清理已确认陈旧的锁后再删除；仍拒绝活动进程",
+    )
+    runs_delete.set_defaults(func=cmd_runs_delete)
+
+    runs_purge = runs_sub.add_parser("purge", help="按条件批量清理 run")
+    runs_purge.add_argument("--root", default="runs")
+    runs_purge.add_argument(
+        "--status",
+        action="append",
+        choices=["complete", "incomplete", "failed", "running", "invalid"],
+        default=None,
+    )
+    runs_purge.add_argument("--older-than-days", type=int, default=None)
+    runs_purge.add_argument("--all", action="store_true", help="选择全部 run")
+    runs_purge.add_argument("--yes", action="store_true")
+    runs_purge.add_argument("--force", action="store_true")
+    runs_purge.set_defaults(func=cmd_runs_purge)
 
     simulate = subparsers.add_parser("simulate", help="用已生成提示词或原始聊天模拟回应")
     simulate.add_argument("--run", help="whole/evidence run 目录（使用 system_prompt.md）")

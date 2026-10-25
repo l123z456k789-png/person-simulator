@@ -143,6 +143,19 @@ def _load_evidence(
         )
     if manifest.coverage is None or not manifest.coverage.complete:
         raise RunIncompleteError("run 覆盖不完整，拒绝加载", stage="runtime")
+    source_messages = manifest.budget.get("source_message_count")
+    analyzed_messages = manifest.budget.get("analyzed_message_count")
+    if (
+        manifest.budget.get("limit_messages") is not None
+        and isinstance(source_messages, int)
+        and isinstance(analyzed_messages, int)
+        and analyzed_messages < source_messages
+    ):
+        raise RunIncompleteError(
+            "pilot run 只分析了部分消息，不能作为完整运行时人物加载",
+            stage="runtime",
+            hint="用完整聊天重新构建，或仅查看 build_report/person_simulation.md",
+        )
 
     try:
         persona = Persona.model_validate(_read_json(run_dir / "persona.json"))
@@ -210,6 +223,12 @@ def _load_whole(
             "whole run 未完成，拒绝加载",
             stage="runtime",
             hint=f"status={data.get('status')!r}",
+        )
+    if data.get("limited") is True:
+        raise RunIncompleteError(
+            "whole pilot run 只分析了部分消息，不能作为完整运行时人物加载",
+            stage="runtime",
+            hint="用完整聊天重新构建",
         )
     recorded_version = data.get("package_version")
     if recorded_version is not None and not _supported_package_version(

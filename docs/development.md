@@ -23,7 +23,7 @@ python -m venv .venv
 ```text
 src/person_simulator/
   parser.py chunking.py budget.py config.py storage.py models.py errors.py
-  pipeline.py
+  pipeline.py privacy.py progress.py runs.py
   wholechat/
   modeling/
   providers/

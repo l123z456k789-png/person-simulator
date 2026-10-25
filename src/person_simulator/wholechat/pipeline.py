@@ -19,6 +19,8 @@ from person_simulator.errors import (
 )
 from person_simulator.models import Message
 from person_simulator.parser import ParsedChat, parse_chat
+from person_simulator.privacy import PrivacyMode, apply_privacy, scan_text
+from person_simulator.progress import ProgressCallback, ProgressEvent, emit
 from person_simulator.providers import build_client
 from person_simulator.providers.base import ModelClient, ModelRequest
 from person_simulator.providers.runner import RequestRunner
@@ -111,8 +113,25 @@ def build_whole(
     out_root: str | Path = "runs",
     client: ModelClient | None = None,
     limit_messages: int | None = None,
+    privacy_mode: PrivacyMode = "warn",
+    progress: ProgressCallback | None = None,
 ) -> WholeBuildResult:
     parsed = parse_chat(input_path, speaker_a, speaker_b, target=target)
+    emit(
+        progress,
+        ProgressEvent(
+            stage="parse",
+            message="解析聊天",
+            current=len(parsed.messages),
+            total=len(parsed.messages),
+        ),
+    )
+    if limit_messages is not None and limit_messages < 1:
+        raise InputError(
+            "limit-messages 必须大于 0",
+            stage="wholechat",
+            hint="使用 1 到原文消息数之间的整数",
+        )
     interlocutor = parsed.speaker_b if target == parsed.speaker_a else parsed.speaker_a
     transcript = serialize_transcript(parsed.messages, limit=limit_messages)
     if transcript.message_count == 0:
@@ -152,8 +171,19 @@ def build_whole(
             active,
             max_attempts=settings.retry.max_attempts,
             max_requests=max(3, settings.budget.max_requests_per_run),
+            progress=progress,
         )
         try:
+            emit(
+                progress,
+                ProgressEvent(
+                    stage="analyze",
+                    message="整段分析",
+                    current=1,
+                    total=1,
+                    task_id="whole:analysis",
+                ),
+            )
             response = runner.call(
                 ModelRequest(
                     task_id="whole:analysis",
@@ -186,6 +216,26 @@ def build_whole(
             messages={message.id: message for message in parsed.messages},
             is_mock=settings.is_mock,
         )
+        emit(
+            progress,
+            ProgressEvent(
+                stage="verify",
+                message="校验整段输出",
+                task_id="whole:analysis",
+            ),
+        )
+        privacy = scan_text(system_prompt + "\n" + (profile or ""))
+        system_prompt, _ = apply_privacy(
+            system_prompt,
+            mode=privacy_mode,
+            label="system_prompt.md ",
+        )
+        if profile:
+            profile, _ = apply_privacy(
+                profile,
+                mode=privacy_mode,
+                label="person_simulation.md ",
+            )
 
         system_path = store.write_text("system_prompt.md", system_prompt + "\n")
         profile_path = (
@@ -209,6 +259,7 @@ def build_whole(
             f"- message refs verified: {len(refs)}",
             f"- system_prompt.md: {len(system_prompt)} characters",
             f"- person_simulation.md: {len(profile) if profile else 0} characters",
+            f"- privacy findings: {privacy.total}",
             "",
             "## Notes",
             "",
@@ -226,9 +277,26 @@ def build_whole(
                 "message_refs": refs,
                 "system_prompt_chars": len(system_prompt),
                 "profile_chars": len(profile) if profile else 0,
+                "privacy": privacy.as_dict(),
             }
         )
         store.write_json("manifest.json", manifest)
+        emit(
+            progress,
+            ProgressEvent(
+                stage="export",
+                message="导出完成",
+                task_id=store.path.name,
+            ),
+        )
+        emit(
+            progress,
+            ProgressEvent(
+                stage="complete",
+                message="构建完成",
+                task_id=store.path.name,
+            ),
+        )
         return WholeBuildResult(
             run_dir=store.path,
             system_prompt_path=system_path,

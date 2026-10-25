@@ -110,6 +110,10 @@ class EvidenceError(PipelineError):
     error_code = "E_EVIDENCE"
 
 
+class PrivacyError(PipelineError):
+    error_code = "E_PRIVACY"
+
+
 class StorageError(PersonSimError):
     exit_code = ExitCode.IO
     error_code = "E_IO"

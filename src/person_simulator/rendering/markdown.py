@@ -266,6 +266,21 @@ def render_persona(
                 "",
             ]
         )
+    source_messages = manifest.budget.get("source_message_count")
+    analyzed_messages = manifest.budget.get("analyzed_message_count")
+    if (
+        manifest.budget.get("limit_messages") is not None
+        and isinstance(source_messages, int)
+        and isinstance(analyzed_messages, int)
+        and analyzed_messages < source_messages
+    ):
+        lines.extend(
+            [
+                f"> **PILOT：只分析了前 {analyzed_messages}/{source_messages} 条消息。**",
+                "> 这不是完整人物档案，不能当作完整人物结论或直接用于长期模拟。",
+                "",
+            ]
+        )
 
     lines.extend(["## 1. 使用说明", ""])
     lines.extend(

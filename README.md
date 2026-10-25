@@ -362,6 +362,28 @@ person-sim resume --run runs\<evidence-run-id> --config config.toml --mode api
 
 - `whole` run 没有同样的分块检查点；超长聊天请改用 `--strategy evidence`，或先用 `--limit-messages` 做 pilot。
 
+构建时可选：
+
+```powershell
+# 输出进度到 stderr（stdout 不变）
+person-sim build ... --progress
+# 或 JSON Lines，便于脚本读取
+person-sim build ... --json-progress
+# 导出前替换手机号/身份证/邮箱/座机/银行卡
+person-sim build ... --redact-pii
+# 发现直接身份信息就拒绝发布
+person-sim build ... --privacy-strict
+```
+
+run 管理：
+
+```powershell
+person-sim runs list
+person-sim runs status <run-id>
+person-sim runs delete <run-id> --yes
+person-sim runs purge --status incomplete --yes
+```
+
 #### 5. 使用生成的人物材料
 
 `evidence` run 会生成：
@@ -605,7 +627,7 @@ Mock 本来就是确定性合成演示，不是真实人物建模。要真实效
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-当前基线是 **180 passed**（Windows，Python 3.12.10）。如果你新增了测试，基线数字会变化；以实际输出为准。
+当前基线是 **217 passed**（Windows，Python 3.12.10）。如果你新增了测试，基线数字会变化；以实际输出为准。
 
 - 涉及打包时运行：
 
@@ -859,6 +881,8 @@ run 目录和 `exports/` 不会因为结束 Mode C 会话而删除；它们仍�
 - evidence 的检查点、锁、run 指纹、损坏缓存重算、请求上限、resume；
 - 13 章 Markdown、独立 `system_prompt.md`、Mock 水印、失败不发布、render 不覆盖；
 - whole-chat 整段生成和 `--strategy auto|whole|evidence`；
+- 导出隐私扫描/`--redact-pii`/`--privacy-strict`，以及 evidence/whole 的 `--progress`/`--json-progress`；
+- `runs list/status/delete/purge` 和 evidence `--limit-messages` pilot（pilot 不能作为完整运行时人物加载）；
 - Mode C 的运行时加载、加密邀请、双监听、会话限额、输出检查和浏览器/CLI 入口，Mock 端到端有测试覆盖；
 - CI 和打包产物检查。
 

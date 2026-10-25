@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 导出隐私扫描：`build`/`render` 默认统计手机号、身份证、邮箱、座机、银行卡；`--redact-pii` 脱敏，`--privacy-strict` 拒绝发布。
+- `runs list/status/delete/purge`：run 元数据、任务状态、安全删除和陈旧/失败 run 清理。
+- 构建进度：核心 `ProgressEvent`，CLI `--progress`/`--json-progress`；回调异常可作为取消信号。
+- evidence `--limit-messages N` pilot；pilot run 带明确标记，并拒绝作为完整运行时人物加载。
+
+### Tests
+
+- 新增 `tests/test_privacy.py`、`tests/test_privacy_build.py`、`tests/test_runs.py`、`tests/test_progress.py`、`tests/test_evidence_pilot.py`。
+
 ## 0.2.1 - 2026-10-25
 
 ### Changed

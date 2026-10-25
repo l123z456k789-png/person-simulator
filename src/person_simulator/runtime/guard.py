@@ -6,16 +6,11 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-PLACEHOLDER = "[已隐藏]"
+from person_simulator.privacy import PLACEHOLDER, redact_direct_identifiers
+
 MIN_REPLAY_CHARS = 40
 PROMPT_LEAK_WINDOW = 60
 
-_MOBILE_RE = re.compile(r"(?<!\d)1[3-9]\d(?:[ -]?\d){8}(?!\d)")
-_ID_CARD_RE = re.compile(r"(?<!\d)\d(?:[ -]?\d){16}[ -]?[\dXx](?!\d)")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-_LANDLINE_RE = re.compile(r"(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)")
-_BANK_CARD_RE = re.compile(r"(?<!\d)\d(?:[ -]?\d){15,18}(?!\d)")
-_FULLWIDTH_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
 _INTERNAL_MARKERS = (
     "person_simulation",
     "system_prompt",
@@ -38,39 +33,6 @@ class GuardResult:
 
 def _normalized(text: str) -> str:
     return _WHITESPACE_RE.sub("", text)
-
-
-def redact_direct_identifiers(text: str) -> tuple[str, int]:
-    normalized = text.translate(_FULLWIDTH_DIGITS)
-    spans: list[tuple[int, int]] = []
-    for pattern in (
-        _ID_CARD_RE,
-        _MOBILE_RE,
-        _EMAIL_RE,
-        _LANDLINE_RE,
-        _BANK_CARD_RE,
-    ):
-        spans.extend(
-            (match.start(), match.end()) for match in pattern.finditer(normalized)
-        )
-    if not spans:
-        return text, 0
-
-    merged: list[tuple[int, int]] = []
-    for start, end in sorted(spans):
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-
-    parts: list[str] = []
-    cursor = 0
-    for start, end in merged:
-        parts.append(text[cursor:start])
-        parts.append(PLACEHOLDER)
-        cursor = end
-    parts.append(text[cursor:])
-    return "".join(parts), len(merged)
 
 
 def find_prompt_leak(text: str, prompt: str) -> bool:

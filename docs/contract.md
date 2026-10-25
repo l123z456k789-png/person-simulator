@@ -73,8 +73,14 @@
 - `validate --input --speaker-a --speaker-b --target`
 - `plan` 同输入参数并支持 `--config`
 - `build` 同输入参数并支持 `--mode mock|api --config --out runs`
-- `resume --run`
-- `render --run --out exports`
+  - `--strategy auto|whole|evidence`
+  - `--limit-messages N`：只分析前 N 条消息的 pilot；evidence/whole 均支持；pilot run 不能被 `load_runtime_persona` 当作完整人物加载
+  - `--redact-pii`：导出前替换手机号/身份证/邮箱/座机/银行卡
+  - `--privacy-strict`：导出前发现直接身份信息则拒绝发布
+  - `--progress` / `--json-progress`：向 stderr 输出构建进度
+- `resume --run`：支持同样的隐私和进度参数
+- `render --run --out exports`：支持同样的隐私和进度参数
+- `runs list` / `runs status` / `runs delete` / `runs purge`：run 元数据、状态、单删和批量清理；删除必须显式 `--yes`，拒绝活动锁和根目录外的路径
 - `eval prepare --input --target --out eval_runs`
 - `eval score --bundle --responses --ratings`
 
@@ -85,6 +91,8 @@
 `build` 在 `out` 下创建独立 `run-ID/`，不覆盖已有文件。目录包含：
 
 `manifest.json`、`messages.jsonl`、`chunks.jsonl`、`analysis/`、`evidence.jsonl`、`persona.json`、`build_report.md`、`person_simulation.md`。
+
+`build_report.md` 包含直接身份信息扫描的分类计数；默认只警告，`--redact-pii` 会修改 `person_simulation.md`/`system_prompt.md`，`--privacy-strict` 会在写入正式导出前拒绝。运行目录中的 `messages.jsonl`/`persona.json` 仍是原始审计材料，不会被导出隐私模式改写。
 
 只有全流程成功才发布正式 Markdown；失败保留检查点，不生成貌似完成的正式文件。写入使用临时文件 + 原子替换，manifest 最后标记 `export_status=complete`。
 
