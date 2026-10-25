@@ -121,3 +121,84 @@
 - Mock 产物显著标记为合成演示。
 - `analysis_status != complete`、覆盖不完整、证据非法或身份缺失时拒绝发布正式文件。
 - 第 13 节和 `system_prompt.md` 必须自包含，可直接复制到网页版 AI。
+
+## 12. 模式 C：第三方模拟运行时（0.2.0）
+
+### 12.1 产品与命令
+
+- 产品模式：A=`archive`（现有 build/render），C=`simulation`（`serve`）。
+- 模型调用模式仍是 `--mode mock|api`；建模策略仍是 `--strategy whole|evidence`。
+- 模式 C 命令：`serve`、`invite create|revoke`、`connect`、`session list|delete`。
+- 默认只监听 `127.0.0.1`；非 loopback 必须显式 `allow_lan`。
+- 管理员接口在独立 loopback 监听器；公开端口不注册 `/admin/*`。
+
+### 12.2 RuntimePersonaV1
+
+从已完成 run 严格派生，不新增建模流程。字段：
+
+`schema_version="runtime-persona-1.0"`、`run_id`、`strategy`、`package_version`、`prompt_version`、`source_hash`、`target`、`interlocutor`、`system_prompt`、`system_prompt_sha256`、`original_system_prompt_sha256`、`is_mock`、`audience`、`replay_guard`、`created_at`。
+
+加载规则：
+
+- evidence：manifest/persona 可解析，analysis/export complete，coverage 完整，source hash 与身份一致，`messages.jsonl` 存在。
+- whole：`schema_version="whole-1.0"`、`status="complete"`、source/target/interlocutor 存在、system prompt 非空。
+- 接受 package 主次版本 `0.1`/`0.2`；未知版本拒绝。
+- `is_mock` 必须与 `--mode` 一致。
+- 原始聊天不加入每轮模型上下文；只用于本地复述检测。
+
+### 12.3 邀请
+
+`invite.psim` 是加密 JSON 信封 + Fernet 密文，只含：
+
+- `format="psim-invite-1"`
+- `endpoint`（http/https，无 userinfo/query/fragment）
+- `token`
+- `expires_at`（带时区）
+- `label`
+- 可选 `server_fingerprint`、`max_sessions`
+
+不得包含人物档案、system prompt、原始聊天、API Key。服务端只保存令牌哈希；邀请可过期、撤销。
+
+### 12.4 会话
+
+- 状态：`active`、`ended`、`expired`、`deleted`。
+- 结束/过期立即清空消息内容；短暂保留无内容墓碑；删除立即移除。
+- 限额：全局/每邀请会话数、TTL、空闲、轮数、输入字符、输出 token、每会话请求速率。
+- 失败或输出检查失败不写入历史；只保存脱敏后的回复。
+
+### 12.5 HTTP 契约
+
+公开端口：
+
+- `GET /`（可带 `?token=` 换取 Cookie）
+- `GET /healthz`
+- `POST /api/session`
+- `GET /api/session`
+- `POST /api/chat`
+- `POST /api/session/end`
+- `/static/*`
+
+管理员端口：
+
+- `GET /admin/invites`
+- `POST /admin/invites`
+- `DELETE /admin/invites/{id}`
+- `GET /admin/sessions`
+- `DELETE /admin/sessions/{id}`
+- `POST /admin/shutdown`
+
+不存在档案下载接口。错误返回 `{error_code, message, hint?}`，不返回堆栈、密钥或聊天正文。
+
+### 12.6 输出检查
+
+- 直接身份信息：手机号、身份证、邮箱、座机、银行卡正则；可配置姓名/地址词表。
+- 提示词泄露：system prompt 60 字符以上连续片段；内部标记/文件名/路径。
+- 复述：evidence 全量逐字检测；whole 至少 prompt-only，若存在 `messages.jsonl` 则升级。
+- 空回复、超长回复、脱敏后只剩占位符：拒绝。
+- 输出检查不是绝对保证；不得在文档中宣称“无法推断”或“绝对隐私”。
+
+### 12.7 错误码
+
+`E_RUN_NOT_FOUND`、`E_RUN_INCOMPLETE`、`E_RUN_VERSION`、`E_RUN_HASH`、`E_RUN_MODE`、`E_INVITE`、`E_UNAUTHORIZED`、`E_FORBIDDEN`、`E_SESSION_NOT_FOUND`、`E_SESSION_ENDED`、`E_SESSION_EXPIRED`、`E_SESSION_LIMIT`、`E_TURN_LIMIT`、`E_INPUT_TOO_LONG`、`E_SESSION_RATE_LIMIT`、`E_CONTEXT_LIMIT`、`E_OUTPUT_BLOCKED`、`E_CLIENT`、`E_INTERNAL`。
+
+CLI 退出码沿用第 9 节；客户端/API 错误为 3，运行时/会话/输出检查为 4，IO 为 5。

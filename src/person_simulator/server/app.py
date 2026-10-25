@@ -185,6 +185,8 @@ class _BaseHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
+        if length > _MAX_BODY_BYTES:
+            raise InputTooLongError("请求体过大", stage="server")
         if length > 0:
             self.rfile.read(length)
 

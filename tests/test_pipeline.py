@@ -144,6 +144,24 @@ def test_resume_rejects_changed_target(tmp_path):
         resume_run(result.run_dir, settings=changed, client=MockClient())
 
 
+def test_resume_accepts_previous_package_version(tmp_path):
+    settings = _settings(tmp_path)
+    result = build_run(
+        _chat(tmp_path),
+        target="A",
+        settings=settings,
+        out_root=tmp_path / "runs",
+    )
+    manifest_path = result.run_dir / "manifest.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["package_version"] = "0.1.0"
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    resumed = resume_run(result.run_dir, settings=settings, client=MockClient())
+
+    assert resumed.report.get("already_complete") is True
+
+
 def test_bad_evidence_fault_fails_without_export(tmp_path):
     settings = _settings(tmp_path)
     output = tmp_path / "runs"

@@ -1,0 +1,8 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include CONTRIBUTING.md
+include config.example.toml
+recursive-include docs *.md
+recursive-include tests *.py
+recursive-include examples *.txt

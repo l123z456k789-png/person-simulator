@@ -70,6 +70,7 @@ from person_simulator.storage import RunStore, analysis_filename, make_run_id, u
 from person_simulator.textstats import language_stats, stats_lines
 
 DEFAULT_OUT = Path("runs")
+SUPPORTED_MANIFEST_PACKAGE_VERSIONS = {"0.1.0", __version__}
 
 
 @dataclass
@@ -926,7 +927,10 @@ def _verify_resume_fingerprint(manifest: Manifest, settings: Settings) -> None:
             stage="resume",
             hint="使用相同配置，或开始新的 run",
         )
-    if manifest.prompt_version != PROMPT_VERSION or manifest.package_version != __version__:
+    if (
+        manifest.prompt_version != PROMPT_VERSION
+        or manifest.package_version not in SUPPORTED_MANIFEST_PACKAGE_VERSIONS
+    ):
         raise ConfigError("resume 的 prompt/package 版本不一致", stage="resume")
     if manifest.is_mock != settings.is_mock:
         raise ConfigError("resume 的运行模式不一致", stage="resume")

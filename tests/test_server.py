@@ -201,6 +201,17 @@ def test_two_sessions_are_isolated(server):
     assert second_meta["turns"] == 0
 
 
+def test_oversized_body_rejected(server):
+    token = server.registry.create("friend", timedelta(minutes=5), 1)[1]
+    client = exchange(server, token)
+
+    response = client.post(
+        "/api/session/end", content=b"x" * (64 * 1024 + 1)
+    )
+
+    assert response.status_code == 413
+
+
 def test_end_session_then_chat_is_gone(server):
     token = server.registry.create("friend", timedelta(minutes=5), 1)[1]
     client = exchange(server, token)
