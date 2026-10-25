@@ -180,10 +180,10 @@
 
 经用户确认，已执行以下低风险动作：
 
-- 在 `person-simulator` 内初始化独立 Git 仓库，分支 `main`；**尚无提交、未推送**。
+- 在 `person-simulator` 内初始化独立 Git 仓库，分支 `main`；已完成首次本地提交 `9955310`，未推送。
 - 在 `.gitignore` 增加 `config.toml` 与 `*.local.toml`，避免本地配置误入版本库。
-- 使用 `git-dynamic-index` 在 README 末尾生成 `AUTO-STATUS` 区块；当前显示 `HEAD: none yet`、工作区 73 个未跟踪文件，这是首次提交前的真实状态。
+- 使用 `git-dynamic-index` 在 README 末尾生成 `AUTO-STATUS` 区块；首次提交前显示 `HEAD: none yet`、73 个未跟踪文件；首次提交后已更新为 `HEAD: 9955310`、工作区 clean（README 自身被排除）。
 - 脱敏 README 与历史报告中的真实人物昵称、个人绝对路径、真实评估目录名和真实聊天哈希；未删除任何运行数据。
 - `git add -n .` 复核：待纳入版本控制的只有代码、文档、配置示例、测试与合成示例，不含 `data/`、`runs/`、`exports/`、`eval_runs/`、`.venv/`。
 
-仍未执行：首次提交、动态索引 Hook 安装、推送、Release。首次提交前需要再次检查 diff 与敏感信息。
+仍未执行：动态索引 Hook 安装、推送、Release。首次提交已完成，提交前已检查暂存清单与敏感信息。

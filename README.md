@@ -125,8 +125,7 @@ python tools\convert_wechat_md.py "D:\export.md" --out data\chat.txt --speaker-a
 ## Project status
 
 - **Branch**: `main`
-- **Last commit (excl. this file)**: none yet
-- **Working tree (excl. this file)**: 73 changed (0 staged, 0 unstaged, 73 untracked, 0 conflicts)
-- **Changed files**: `??` `.gitignore`, `??` `AGENTS.md`, `??` `config.example.toml`, `??` `docs/contract.md`, `??` `docs/final-report.md` (+68 more; counts are complete)
+- **Last commit (excl. this file)**: `9955310` chore: establish audited baseline for open-source release (2026-10-25)
+- **Working tree (excl. this file)**: clean
 - **Upstream**: not set
 <!-- AUTO-STATUS-END -->
